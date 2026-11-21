@@ -494,25 +494,46 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
   - **63 of the 461 persons have a verified legal name that agrees with none of their declared
     names** — the population `NAME_MISMATCH_VERIFIED` will be drawn from.
 
-### Step 6 — Hit fact gatherer
-- **Goal.** The hit's fact sheet with `source_ids` (the hit itself, and `SR-…` for search-derived facts).
-- **Files.** `system/hit_facts.py`, `system/search_anchor.py`
-- **Notes.** Names = `name` + `aliases` (strip `(AKA)`-style tags). Countries per §3.4 (drop
-  `International`/`Europe`). DOB priority (D16): `dobs` → first paragraph (explicit `born in/on`, then
-  the age-cue patterns: `aged NN`, `age of NN`, `NN-year-old`, `NN year old`, `, NN,`, `was NN`,
-  `then NN`, `reached the age of NN`; require exactly one `Month YYYY` or one `Month D, YYYY` in the
-  paragraph; age at a date → `{Y-age, Y-age-1}`) → anchored search results. Anchoring: the result's
-  title+snippet contains the listing phrase of the hit's `primary_category` (else the first of
-  `categories`) **and** a country tied to the hit (names and demonyms). Dated reports: strict regex
-  `^\s*According to .*?;\s*(Month D, YYYY):` per line → earliest. Death: `deceased_date` (D17).
-  Companies: only `dobs` is an incorporation date.
-- **Acceptance.** `tests/test_hit_facts.py`: 214 hits have ≥ 1 dated report and the `June 2014` /
-  `SAM:` lines are excluded; the strict earliest date of `H-13E1CF` is `2020-01-08`; the four
-  deceased dates parse (incl. `2022-03`); `H-D861DA` → `{1976, 1977}`, `H-4AA437` → `{1986, 1987}`,
-  `H-582410` → `{1967, 1968}`, `H-EC242D` → `{1967, 1968}`; `H-622EDD` and `H-FC22E2` get
-  `{1972, 1973}` from `SR-A88751` / `SR-65C752`; the 10 203 phrase-free results anchor nothing.
-- **Risks.** Over-eager first-paragraph parsing invents a DOB and causes a 60-cost clear → require an
-  explicit cue, bail out on any ambiguity (two ages, two dates, a multi-line paragraph).
+### Step 6 — Hit fact gatherer — **[x] done**
+- **Goal.** The hit's fact sheet, with `source_ids` on anything a search result supplied.
+- **Files.** `system/search_anchor.py`, `system/hit_facts.py`, `tests/test_search_anchor.py`,
+  `tests/test_hit_facts.py`
+- **Notes.** Names = `name` + `best_matching_name` + the joined `first/middle/last` + `aliases`;
+  more candidate names make agreement easier, which makes a name-based clear **harder** — the safe
+  direction. Countries per principle 5, `International`/`Europe` dropped. DOB priority: `dobs` →
+  first paragraph → anchored search results; companies take **only** `dobs`. Anchoring is a plain
+  string match for the category's listing phrase plus one of the hit's countries. Dated reports use
+  the strict form with the colon (D22). The hit carries **no** source ids — it is the subject of the
+  decision, never evidence for it — while search-derived dates carry their `SR-…` id, which is why
+  the labels cite `SR-…` and never `H-…`.
+- **Acceptance — met.** **369 tests pass** (75 new), 76 s. All 819 hit sheets in **0.1 s**.
+  Dates of birth come from the field for 152 hits, the notes for 43, search for 72, and nowhere for
+  552. **All ten** practice-label hit dates of birth are exact, and **all five** search results the
+  labels cite are anchored (`SR-A88751`, `SR-65C752`, `SR-01BFC3`, `SR-AE2CE1`, `SR-590704`).
+  215 hits have a strict dated report, `H-13E1CF`'s earliest is `2020-01-08` as its label says, 4
+  have a death date, 87 have no country at all, and no company hit takes a date from notes or search.
+- **Findings.**
+  - **A false date of birth got through, and it is the exact shape of the 60-cost mistake.**
+    `H-2017F1`'s first paragraph is a provider dated report about a robbery; the appositive age cue
+    `, NN,` matched **inside `PKR 11,000,000`**, giving an age of 100 against the year 2025 and a
+    fabricated birth year of 1924/1925 — which would have fired `DOB_MISMATCH` and cleared the hit.
+    Two fixes: every age cue now uses a guarded number pattern that rejects anything part of a
+    longer number, and **a paragraph that is a dated report never supplies a date of birth** (POLICY
+    gives dated reports their own job — bounding how young the customer could have been). An outright
+    `"was born in 1952"` is still read even inside such a paragraph, because that is unambiguous.
+    Note-derived dates went 44 → 43, and the one lost was the wrong one.
+  - The same guard was needed in `search_anchor`: the first version's lookarounds rejected the age in
+    `"Elena Johansson, 51, as the subject of enforcement action"` because of the trailing comma, so
+    only 3 of 72 anchored hits yielded years. Now **all 6 679** anchorable results state exactly one
+    age and yield exactly two consecutive birth years.
+  - **Anchoring is as selective as POLICY promises.** 10 203 of 16 882 results (60 %) carry no
+    listing phrase at all, no result carries two, and only **72 of 702** individual hits end up with
+    an anchored result — the rest are namesakes.
+  - 87 hits have **no country**, so they can neither be located nor have a search result anchored:
+    unknown is not a mismatch, so `LOCATION_MISMATCH` simply cannot fire for them.
+  - The age-cue list is deliberately closed (13 phrasings). The decoys in the same slot are instructive:
+    `"On June 14, 2024, OFAC added Tor Fredrik Vejdeland to its SDN List"` (a date, no age) and
+    `"Entity ID: 13938136"` (a big number, no date) both correctly yield nothing.
 
 ### Step 7 — Rules engine, evidence, reasons
 - **Goal.** `(customer_facts, hit_facts) → (decision, reason_code, evidence, reason)`, pure and deterministic.
