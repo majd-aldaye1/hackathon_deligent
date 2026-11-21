@@ -25,6 +25,29 @@ LISTING_PHRASES = {
 }
 OTHER_LISTING = "named on a watchlist"
 
+CLEAR_TAIL = {
+    "ENTITY_TYPE_MISMATCH": "A person and a company cannot be the same entity, so {hit} is cleared.",
+    "DECEASED": "The listed person died before the customer was screened, so {hit} is not the customer.",
+    "TEMPORAL_IMPOSSIBILITY": "The customer could not be the subject of that report, so {hit} is a different {kind}.",
+    "DOB_MISMATCH": "No birth date the hit gives fits the customer, so {hit} is a different {kind}.",
+    "NAME_MISMATCH_VERIFIED": "The verified legal name outranks the name on the customer record, so {hit} is a different {kind}.",
+    "LOCATION_MISMATCH": "With no country in common, {hit} is a different {kind}.",
+}
+
+
+def hit_label(hf) -> str:
+    return f"{hf.name} ({hf.hit_id})" if hf.name else hf.hit_id
+
+
+def cap(x: str) -> str:
+    return x[:1].upper() + x[1:] if x else x
+
+
+def cap_sentences(sents: list, n: int) -> list:
+    """At most n sentences: keep the first n-1 and the conclusion."""
+    return sents if len(sents) <= n else sents[:n - 1] + sents[-1:]
+
+
 CODE_PRIORITY = [
     "ENTITY_TYPE_MISMATCH", "DECEASED", "TEMPORAL_IMPOSSIBILITY", "DOB_MISMATCH",
     "NAME_MISMATCH_VERIFIED", "LOCATION_MISMATCH",
@@ -326,9 +349,10 @@ class Engine:
             for n in self.record_names(rid):
                 names.append((n, rid))
             for f in ("residence_country", "nationality"):
-                cc = T.norm_country(s(c.get(f)))
-                if cc and rid not in countries[cc]:
-                    countries[cc].append(rid)
+                for v in as_list(c.get(f)):          # a string, or a list (dual nationality)
+                    cc = T.norm_country(s(v))
+                    if cc and rid not in countries[cc]:
+                        countries[cc].append(rid)
             checks.extend(self.approved_kyc(rid))
             nc, pl = self.note_checks_and_places(rid)
             checks.extend(nc)
@@ -421,7 +445,7 @@ class Engine:
                 return False
         sc = T.norm_country(s(alert.get("country")))
         if sc:
-            have = {T.norm_country(s(c.get("residence_country"))), T.norm_country(s(c.get("nationality")))}
+            have = {T.norm_country(s(v)) for f in ("residence_country", "nationality") for v in as_list(c.get(f))}
             if sc not in have:
                 return False
         scity = s(alert.get("city"))
@@ -596,7 +620,7 @@ class Engine:
             if comp_c:
                 if T.date_key_low(p.dob) > hf.earliest_report:
                     contra["TEMPORAL_IMPOSSIBILITY"] = (
-                        [p.dob_src], f"The customer was incorporated on {T.fmt_date(p.dob)} ({p.dob_src}), after the hit's "
+                        [p.dob_src], f"The customer was incorporated {'on' if p.dob[2] else 'in'} {T.fmt_date(p.dob)} ({p.dob_src}), after the hit's "
                                      f"profile reports activity on {T.fmt_date(hf.earliest_report)}.")
             else:
                 age = max_age_at(p.dob, hf.earliest_report)
@@ -618,11 +642,11 @@ class Engine:
                             f"({p.dob_src}) but the hit's {describe_hit_dobs(hf)}.")
         # name
         cnames, verified_used = self.customer_names(p, comp)
-        name_agree, agreed_with, name_src = False, None, []
+        name_agree, agreed_with, agreed_cust, name_src = False, None, None, []
         for n, src in cnames:
             for hn in hf.names:
                 if T.names_agree(n, hn, comp):
-                    name_agree, agreed_with, name_src = True, hn, [src]
+                    name_agree, agreed_with, agreed_cust, name_src = True, hn, n, [src]
                     break
             if name_agree:
                 break
@@ -678,22 +702,24 @@ class Engine:
                 for x in contra[c][0]:
                     if x and x not in ev:
                         ev.append(x)
+            sents = [contra[c][1] for c in codes[:3]]
+            if name_agree and len(sents) < 3 and codes[0] != "NAME_MISMATCH_VERIFIED":
+                sents.append(f"The names agree ({agreed_cust} and {agreed_with}), but a shared name alone "
+                             f"does not make them the same {'company' if comp else 'person'}.")
+            sents.append(CLEAR_TAIL[codes[0]].format(hit=hit_label(hf), kind="company" if comp_h else "person"))
             return dict(decision="DIFFERENT_ENTITY", reason_code=codes[0], all_codes=codes, evidence=ev,
-                        explanation=" ".join(contra[c][1] for c in codes))
+                        explanation=" ".join(sents), sentences=sents)
 
         loc_ev = []
         for c in sorted(shared):
             for src in p.countries[c]:
                 if src not in loc_ev:
                     loc_ev.append(src)
-        sentences = []
-        if dob_agree:
-            sentences.append(f"The customer's date of birth {T.fmt_date(p.dob)} ({p.dob_src}) agrees with the hit's "
-                             f"{' or '.join(sorted({T.fmt_date(d) for d, _, _ in hf.dobs}))}.")
-        if loc_agree:
-            sentences.append(f"Both the customer and the hit are linked to {', '.join(sorted(shared))}.")
-        if name_agree:
-            sentences.append(f"The customer's name agrees with the hit's name {agreed_with}.")
+        name_txt = (f"The customer's {'verified legal name' if verified_used else 'name'} {agreed_cust} "
+                    f"({name_src[0]}) agrees with the hit's name {agreed_with}") if name_agree else ""
+        dob_txt = (f"the {'incorporation date' if comp_c else 'date of birth'} {T.fmt_date(p.dob)} ({p.dob_src}) "
+                   f"agrees with the hit's {' or '.join(hit_dobs_txt)}") if dob_agree else ""
+        loc_txt = f"both are linked to {', '.join(sorted(shared))}" if loc_agree else ""
 
         def ev_union(*lists):
             out = []
@@ -705,28 +731,56 @@ class Engine:
 
         if not comp and name_agree and dob_agree:
             code = "NAME_DOB_LOCATION_MATCH" if loc_agree else "NAME_DOB_MATCH"
+            sents = [name_txt + ".", cap(dob_txt) + (f", and {loc_txt}." if loc_agree else ".")]
+            sents.append(f"Nothing in the customer's records contradicts the hit, so {hit_label(hf)} is the customer.")
             return dict(decision="SAME_ENTITY", reason_code=code,
                         all_codes=[code] + (["NAME_DOB_MATCH"] if loc_agree else []),
-                        evidence=ev_union(loc_ev, dob_ev) or ev_union(name_src), explanation=" ".join(sentences))
+                        evidence=ev_union(loc_ev, dob_ev) or ev_union(name_src),
+                        explanation=" ".join(sents), sentences=sents)
         if comp and comp_c and comp_h and name_agree and loc_agree:
+            sents = [name_txt + f", and {loc_txt}.",
+                     f"Nothing in the customer's records contradicts the hit, so {hit_label(hf)} is the customer."]
             return dict(decision="SAME_ENTITY", reason_code="NAME_LOCATION_MATCH", all_codes=["NAME_LOCATION_MATCH"],
-                        evidence=ev_union(loc_ev) or ev_union(name_src), explanation=" ".join(sentences))
-        missing = []
-        if not name_agree:
-            missing.append("the name cannot be compared with it" if not cnames else "the name does not clearly agree")
-        if not comp and not dob_agree:
-            missing.append("the date of birth cannot be compared with it" if not (p.dob and hf.dobs)
-                           else "the dates of birth neither agree nor contradict")
-        if comp and not loc_agree:
-            missing.append("the country cannot be compared with it")
+                        evidence=ev_union(loc_ev) or ev_union(name_src),
+                        explanation=" ".join(sents), sentences=sents)
+
+        # REVIEW: say what agrees, what is missing, and why that leaves it open.
+        sents = []
+        agrees = [x for x in (name_txt, dob_txt, loc_txt) if x]
+        if agrees:
+            sents.append(cap(", and ".join(agrees)) + ".")
         if not comp and name_agree and dob_agree and not loc_agree:
-            missing = ["the countries differ although name and date of birth agree"]
-        sentences.append("Nothing in the customer's records contradicts the hit, and "
-                         + " and ".join(missing or ["the evidence is incomplete"])
-                         + ", so the hit can be neither cleared nor confirmed.")
+            sents.append(f"But the customer is linked only to {', '.join(sorted(ccs))} and the hit only to "
+                         f"{', '.join(sorted(hf.countries))}, and a country difference does not clear a hit whose "
+                         f"name and date of birth agree.")
+            sents.append(f"The evidence conflicts, so {hit_label(hf)} goes to an analyst.")
+        else:
+            gaps = []
+            if not name_agree:
+                if not cnames:
+                    gaps.append("the customer has no name with two real parts to compare")
+                else:
+                    gaps.append(f"the customer's name {cnames[0][0]} does not clearly agree with the hit's name "
+                                f"{hf.name}, and without an approved identity check that cannot clear it")
+            if not comp and not dob_agree:
+                if not p.dob and not hf.dobs:
+                    gaps.append("neither side gives a date of birth")
+                elif not p.dob:
+                    gaps.append("the customer's records give no date of birth")
+                elif not hf.dobs:
+                    gaps.append("the hit gives no date of birth in its listing, profile notes or matching search results")
+                else:
+                    gaps.append(f"the customer's date of birth {T.fmt_date(p.dob)} ({p.dob_src}) neither agrees with "
+                                f"nor contradicts the hit's {' or '.join(hit_dobs_txt)}")
+            if comp and not loc_agree:
+                gaps.append("the customer and the hit share no country" if ccs and hf.countries
+                            else "the country cannot be compared")
+            sents.append(cap("; ".join(gaps or ["the evidence is incomplete"])) + ".")
+            sents.append(f"Nothing contradicts the hit and too little agrees to confirm it, so {hit_label(hf)} "
+                         f"goes to an analyst.")
         return dict(decision="REVIEW", reason_code="INSUFFICIENT_DATA", all_codes=["INSUFFICIENT_DATA"],
                     evidence=ev_union(loc_ev, dob_ev if dob_agree else []) or ev_union(name_src),
-                    explanation=" ".join(sentences))
+                    explanation=" ".join(sents), sentences=sents)
 
     def decide_alert(self, alert) -> list[dict]:
         people, path = self.resolve(alert)
@@ -740,8 +794,10 @@ class Engine:
             if not people:
                 out.append(dict(hit_id=hid, alert_id=s(alert.get("alert_id")), decision="REVIEW",
                                 reason_code="INSUFFICIENT_DATA", customer_record_id=None, evidence=[],
-                                explanation="No customer record in the system of record fits the alert, so the hit "
-                                            "cannot be compared with the customer.",
+                                explanation=(f"No customer record in the system of record fits the alert for "
+                                             f"{s(alert.get('customer_name')) or 'the screened customer'}, so there is "
+                                             f"nothing to compare the hit with. Without the customer's details "
+                                             f"{hit_label(hf)} can be neither cleared nor confirmed."),
                                 path=path, persons=[], hit_facts=hf))
                 continue
             per = []
@@ -765,13 +821,18 @@ class Engine:
                 if len(decisions) == 1:
                     rec = dict(decision=per[0]["decision"], reason_code=per[0]["reason_code"],
                                all_codes=per[0]["all_codes"], customer_record_id="AMBIGUOUS", evidence=ev,
-                               explanation=f"{len(per)} different people fit the alert and all lead to the same decision. "
-                                           + per[0]["explanation"])
+                               explanation=" ".join(cap_sentences(
+                                   [f"{len(per)} different people fit the alert "
+                                    f"({', '.join(x['person'].primary for x in per)}) and all lead to the same decision."]
+                                   + per[0]["sentences"], 4)))
                 else:
                     rec = dict(decision="REVIEW", reason_code="AMBIGUOUS_CUSTOMER_RECORD",
                                all_codes=["AMBIGUOUS_CUSTOMER_RECORD"], customer_record_id="AMBIGUOUS", evidence=ev,
-                               explanation=f"{len(per)} different people fit the alert and they lead to different "
-                                           f"decisions ({', '.join(x['person'].primary + ': ' + x['decision'] for x in per)}).")
+                               explanation=(f"{len(per)} different people fit the alert and they lead to different "
+                                            f"decisions ({', '.join(x['person'].primary + ': ' + x['decision'] for x in per)}). "
+                                            f"The bank's records cannot say which of them was screened, so "
+                                            f"{hit_label(hf)} goes to an analyst."))
+            rec["explanation"] = re.sub(r"(?<!\.)\.\.(?!\.)", ".", rec["explanation"])
             rec.update(hit_id=hid, alert_id=s(alert.get("alert_id")), path=path, persons=per, hit_facts=hf)
             out.append(rec)
         return out
@@ -1002,7 +1063,8 @@ def parse_kyc_note(txt: str, created):
                 cur = []
         if cur:
             runs.append(cur)
-        runs = [r for r in runs if len(r) >= 2]
+        # a run that is itself a country ("United States") is a document country, not a name
+        runs = [r for r in runs if len(r) >= 2 and not T.is_country_name(" ".join(r))]
         if runs:
             name = " ".join(max(runs, key=len))
         elif best:

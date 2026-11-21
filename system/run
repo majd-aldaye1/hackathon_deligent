@@ -1,0 +1,11 @@
+#!/bin/sh
+# Usage: system/run <data folder> <output file>
+# Reads only <data folder> and writes one JSON line per hit to <output file>.
+set -eu
+if [ "$#" -ne 2 ]; then
+  echo "usage: system/run <data folder> <output file>" >&2
+  exit 2
+fi
+DIR=$(cd "$(dirname "$0")" && pwd)
+# The engine is deterministic; a fixed hash seed is a second guarantee.
+PYTHONHASHSEED=0 exec python3 "$DIR/run.py" "$1" "$2"

@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Serve the analyst console:  python3 serve.py [--port 8000]  then open http://localhost:8000"""
+"""Serve the analyst console:
+
+    python3 system/run.py dev output/dev.jsonl --trace out/trace.json
+    python3 system/serve.py [--port 8000] [--trace out/trace.json]   then open http://localhost:8000
+"""
 import argparse
 import http.server
 import os
 import socketserver
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-ROUTES = {"/": "ui/index.html", "/index.html": "ui/index.html", "/trace.json": "out/trace.json"}
+REPO = os.path.dirname(ROOT)
+ROUTES = {"/": os.path.join(ROOT, "ui/index.html"), "/index.html": os.path.join(ROOT, "ui/index.html")}
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -16,7 +21,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def translate_path(self, path):
         p = path.split("?", 1)[0].split("#", 1)[0]
         if p in ROUTES:
-            return os.path.join(ROOT, ROUTES[p])
+            return ROUTES[p]
         return super().translate_path(path)
 
     def log_message(self, *a):
@@ -26,9 +31,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--trace", default=os.path.join(REPO, "out", "trace.json"))
     args = ap.parse_args()
-    if not os.path.exists(os.path.join(ROOT, "out/trace.json")):
-        print("out/trace.json not found — run: python3 run.py --data dataset")
+    ROUTES["/trace.json"] = os.path.abspath(args.trace)
+    if not os.path.exists(args.trace):
+        print(f"{args.trace} not found — run: python3 system/run.py <data folder> output/dev.jsonl --trace out/trace.json")
     with socketserver.ThreadingTCPServer(("127.0.0.1", args.port), Handler) as httpd:
         print(f"Namesake analyst console → http://localhost:{args.port}")
         httpd.serve_forever()

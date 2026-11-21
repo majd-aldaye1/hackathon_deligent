@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Score decisions against the practice labels.
 
-    python3 evaluate.py --data dataset [--verbose]
+    python3 system/evaluate.py <data folder> [--verbose]
+
+The organisers' validate.py --score is the reference scorer; this one adds evidence
+precision/recall and prints the path for every miss.
 """
 import argparse
 import sys
@@ -13,7 +16,7 @@ from screening.engine import Engine
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="dataset")
+    ap.add_argument("data", help="data room folder with practice_labels.jsonl")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     ds = load(args.data)

@@ -497,6 +497,12 @@ def norm_country(s) -> str | None:
     return raw.strip().title() if len(raw) > 2 else None
 
 
+def is_country_name(s) -> bool:
+    """True only when the whole string is a known country name or demonym ("United States", "the Netherlands")."""
+    f = fold(strip_brackets(str(s or ""))).strip().strip(".,;")
+    return bool(f) and (f in _NAME2CANON or re.sub(r"^the\s+", "", f) in _NAME2CANON)
+
+
 # free-text country finder (names + demonyms; codes are NOT used in free text)
 _FT_TERMS = sorted(
     {(_a, c) for c, (_code, al) in _COUNTRIES.items() for _a in [c] + al

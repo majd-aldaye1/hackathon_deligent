@@ -181,5 +181,8 @@ def load(path: str) -> Dataset:
     if variants:
         with open(variants[0], encoding="utf-8") as fh:
             g, fms = _parse_variants_json(json.load(fh))
-        T.configure_names(g, fms)
+        # Merge with the built-in groups (the dev set's name_variants.json) rather than replace them,
+        # so a file layout the generic parser only partly understands can never lose a variant.
+        T.configure_names((g or []) + [[w.strip() for w in grp.split(",")] for grp in T.DEFAULT_VARIANT_GROUPS],
+                          (fms or []) + [w.strip() for w in T.DEFAULT_LEGAL_FORMS.split(",")])
     return ds.build()
