@@ -18,16 +18,19 @@ from .facts import Fact, merge
 class VerifiedIdentity(object):
     """One approved identity check, from the provider or from an onboarding note."""
 
-    __slots__ = ("source_id", "checked_at", "name", "dob", "document_country", "quote")
+    __slots__ = ("source_id", "checked_at", "name", "dob", "document_country", "quote",
+                 "provisional")
 
     def __init__(self, source_id, checked_at, name=None, dob=None, document_country=None,
-                 quote=None):
+                 quote=None, provisional=False):
         self.source_id = source_id
         self.checked_at = checked_at
         self.name = name or None
         self.dob = dob
         self.document_country = document_country
         self.quote = quote
+        # True when a language model, not a pattern, read this check out of a note.
+        self.provisional = bool(provisional)
 
     def recency(self):
         return (self.checked_at.key() if self.checked_at else (0, 0, 0), self.source_id)
@@ -84,17 +87,23 @@ class CustomerFacts(object):
     def verified_name(self):
         """The verified legal name, which "outranks the name on the customer record"."""
         check = self._first_approved_with("name")
-        return Fact(check.name, (check.source_id,)) if check else None
+        if not check:
+            return None
+        return Fact(check.name, (check.source_id,), check.provisional)
 
     @property
     def verified_dob(self):
         check = self._first_approved_with("dob")
-        return Fact(check.dob, (check.source_id,)) if check else None
+        if not check:
+            return None
+        return Fact(check.dob, (check.source_id,), check.provisional)
 
     @property
     def verified_country(self):
         check = self._first_approved_with("document_country")
-        return Fact(check.document_country, (check.source_id,)) if check else None
+        if not check:
+            return None
+        return Fact(check.document_country, (check.source_id,), check.provisional)
 
     # -- what the rules compare
 
@@ -184,8 +193,12 @@ def _dedupe_names(facts):
     return out
 
 
-def gather(data, record_ids, variants=None):
-    """Build the fact sheet for one person, given every record they own."""
+def gather(data, record_ids, variants=None, extractor=None):
+    """Build the fact sheet for one person, given every record they own.
+
+    `extractor` is the optional language-model fallback.  It is asked only about a note
+    the patterns could not read, and whatever it returns is marked provisional.
+    """
     record_ids = tuple(sorted(record_ids))
     records = [data.customer_by_id[r] for r in record_ids if r in data.customer_by_id]
     if not records:
@@ -231,11 +244,6 @@ def gather(data, record_ids, variants=None):
         note_ids.append(note["note_id"])
         if note.get("channel", "") == notes_regex.KYC_CHANNEL:
             parsed = notes_regex.parse_kyc_note(note)
-            if parsed is None:
-                # A note filed as an identity check that we could not read at all.
-                unreadable_checks.append(note["note_id"])
-            elif parsed.is_approved and not parsed.verified_dob:
-                unreadable_checks.append(note["note_id"])
             if parsed is not None and parsed.is_approved:
                 approved.append(
                     VerifiedIdentity(
@@ -247,12 +255,24 @@ def gather(data, record_ids, variants=None):
                         quote=parsed.quotes,
                     )
                 )
+            unread = parsed is None or (parsed.is_approved and not parsed.verified_dob)
+            if unread and extractor is not None:
+                recovered = _ask_about_check(extractor, note)
+                if recovered is not None:
+                    approved.append(recovered)
+                    unread = not recovered.dob
+            if unread:
+                unreadable_checks.append(note["note_id"])
             continue
         found = notes_regex.places_lived(note)
-        if not found and notes_regex.looks_like_residence(note):
-            unreadable_places.append(note["note_id"])
         for key in found:
             country_facts.append(Fact(key, (note["note_id"],)))
+        if not found and notes_regex.looks_like_residence(note):
+            recovered = _ask_about_places(extractor, note)
+            for key in recovered:
+                country_facts.append(Fact(key, (note["note_id"],), True))
+            if not recovered:
+                unreadable_places.append(note["note_id"])
 
     approved.sort(key=lambda c: c.recency(), reverse=True)
 
@@ -272,6 +292,35 @@ def gather(data, record_ids, variants=None):
         unreadable_places=sorted(unreadable_places),
         unreadable_checks=sorted(unreadable_checks),
     )
+
+
+def _ask_about_check(extractor, note):
+    """Let the model read an identity check the patterns could not."""
+    try:
+        found = extractor.note_check(note.get("text", ""))
+    except Exception:
+        return None
+    if found is None or not found.is_approved:
+        return None
+    return VerifiedIdentity(
+        source_id=note["note_id"],
+        checked_at=dates.parse(note.get("created_at")),
+        name=found.name,
+        dob=found.dob,
+        document_country=found.country,
+        quote=found.quotes,
+        provisional=True,
+    )
+
+
+def _ask_about_places(extractor, note):
+    """Let the model read a residence statement the patterns could not."""
+    if extractor is None:
+        return []
+    try:
+        return [place.country for place in extractor.note_places(note.get("text", ""))]
+    except Exception:
+        return []
 
 
 def _person_notes(data, records):

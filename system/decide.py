@@ -76,7 +76,9 @@ class Engine(object):
 
     def sheet(self, person):
         if person not in self._sheets:
-            self._sheets[person] = customer_facts.gather(self.data, person, self.variants)
+            self._sheets[person] = customer_facts.gather(
+                self.data, person, self.variants, self.extractor
+            )
         return self._sheets[person]
 
     # -- the decision
@@ -104,7 +106,7 @@ class Engine(object):
     def _decide(self, hit, hit_id, alert_id):
         screened = self.screened(alert_id)
         resolution = self.resolution(alert_id)
-        facts = hit_facts.gather(self.data, hit, self.variants)
+        facts = hit_facts.gather(self.data, hit, self.variants, self.extractor)
 
         if not resolution.found:
             return Decision(

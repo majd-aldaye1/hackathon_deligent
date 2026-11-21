@@ -70,6 +70,40 @@ _PATTERNS = [
 ]
 
 
+# "the third of May 1966" is a date a provider or a note may well write.
+_DAY_WORDS = {}
+for _i, _word in enumerate(
+    "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth "
+    "thirteenth fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth "
+    "twenty-first twenty-second twenty-third twenty-fourth twenty-fifth twenty-sixth "
+    "twenty-seventh twenty-eighth twenty-ninth thirtieth thirty-first".split(),
+    start=1,
+):
+    _DAY_WORDS[_word] = _i
+    _DAY_WORDS[_word.replace("-", " ")] = _i
+
+_ORDINAL = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b", re.I)
+
+
+def _normalise(raw):
+    """Strip the English furniture a date can be written with.
+
+    "the 3rd of February 1981" and "the twelfth of May 1966" both become a shape the
+    patterns below already read.  Nothing here changes what counts as a date: a string
+    that was not a date before is still not one.
+    """
+    text = raw.strip()
+    text = re.sub(r"^(?:the)\s+", "", text, flags=re.I)
+    lowered = text.lower()
+    for word in sorted(_DAY_WORDS, key=len, reverse=True):
+        if re.search(r"\b%s\b" % re.escape(word), lowered):
+            text = re.sub(r"\b%s\b" % re.escape(word), str(_DAY_WORDS[word]), text, flags=re.I)
+            break
+    text = _ORDINAL.sub(r"\1", text)
+    text = re.sub(r"\bof\s+", "", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _month_value(raw):
     if raw is None:
         return None
@@ -88,6 +122,18 @@ def parse(text):
     if not raw:
         return None
     raw = re.sub(r"\s+", " ", raw)
+    candidates = [raw]
+    tidied = _normalise(raw)
+    if tidied != raw:
+        candidates.append(tidied)
+    for candidate in candidates:
+        found = _match(candidate, raw)
+        if found is not None:
+            return found
+    return None
+
+
+def _match(raw, original):
     for pattern, (yi, mi, di) in _PATTERNS:
         m = pattern.match(raw)
         if not m:
@@ -101,7 +147,7 @@ def parse(text):
         day = int(m.group(di)) if di else None
         if day is not None and not 1 <= day <= 31:
             return None
-        return Date(year, month, day, text=raw)
+        return Date(year, month, day, text=original)
     return None
 
 

@@ -88,12 +88,26 @@ class TestLlmAvailability(unittest.TestCase):
     def test_no_llm_overrides_a_key(self):
         self.assertFalse(cli.llm_available(True, env={cli.ENV_KEY: "sk-x"}))
 
-    def test_a_key_that_leads_nowhere_falls_back_to_regex_only(self):
-        # Until step 10 there is no llm module at all; that must not be an error.
+    def test_no_key_in_the_environment_means_no_model_whatever_is_on_disk(self):
+        # The key comes from the environment variable the brief names and nowhere else, so
+        # a .env sitting beside the code cannot change how a graded run behaves.
+        before = os.environ.get(cli.ENV_KEY)
+        os.environ.pop(cli.ENV_KEY, None)
+        try:
+            self.assertFalse(cli.llm_available(False))
+            self.assertIsNone(cli.build_extractor(False))
+        finally:
+            if before is not None:
+                os.environ[cli.ENV_KEY] = before
+
+    def test_a_key_that_leads_nowhere_still_produces_a_run(self):
         before = os.environ.get(cli.ENV_KEY)
         os.environ[cli.ENV_KEY] = "sk-not-a-real-key"
         try:
-            self.assertIsNone(cli.build_extractor(False))
+            # A client is built, but it answers nothing, so every fact stays unknown.
+            extractor = cli.build_extractor(False)
+            self.assertIsNotNone(extractor)
+            self.assertIsNone(extractor.hit_birth("He was born in 1950."))
         finally:
             if before is None:
                 del os.environ[cli.ENV_KEY]
@@ -125,8 +139,14 @@ class TestRunOnATinyFolder(unittest.TestCase):
         self.assertTrue(os.path.isfile(target))
 
     def test_the_report_names_the_counts_and_the_model(self):
+        before = os.environ.get(cli.ENV_KEY)
+        os.environ.pop(cli.ENV_KEY, None)
         buffer = io.StringIO()
-        cli.run(self.folder.path, os.path.join(self.out, "o.jsonl"), out=buffer)
+        try:
+            cli.run(self.folder.path, os.path.join(self.out, "o.jsonl"), out=buffer)
+        finally:
+            if before is not None:
+                os.environ[cli.ENV_KEY] = before
         text = buffer.getvalue()
         self.assertIn("1 hits", text)
         self.assertIn("language model: not used", text)

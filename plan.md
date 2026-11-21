@@ -287,6 +287,8 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 | D25 | A verified field the newest check omits | leave it unknown / fall back to an older approved check | **fall back to the most recent approved check that states it** | POLICY names "the most recent approved identity check" as the source for all three fields, but 1 850 provider checks carry no `verified_dob` and 8 note-recorded ones carry no country. An older *approved* check is still verified evidence, and leaving the field unknown would silently demote the customer to their declared data | 2026-11-21 |
 | D26 | Evidence for a hit-only rule (`DECEASED`, `ENTITY_TYPE_MISMATCH`) | cite nothing / cite the customer's records | **cite the person's own records** | the hit is the subject of the decision and is never evidence (no label cites an `H-…`), but principle 9 wants "the records it relied on" and the customer side of both comparisons is the record itself | 2026-11-21 |
 | D27 | A fact source that is present but unreadable | treat the fact as absent / treat the set as unknown and refuse to clear | **treat the set as unknown** — guards A, B and C | POLICY's contradictions quantify over *every* country / *every* birth date, so an unread fact makes the set unknown rather than smaller, and "unknown is not a mismatch". Measured with `tools/ablate.py`: without the guards, a failed extractor turns **51** hits into clears, two of them practice labels whose truth is `SAME_ENTITY`. With them, all five ablations produce **0** new clears, at **no cost on dev** | 2026-11-21 |
+| D28 | A fact the language model recovered | treat it like any other fact / let it block a clear but never carry one | **block only** (`Fact.provisional`) | a clear that is wrong costs 60 against 3 for a review, and a model is not reproducible the way a pattern is, while reproducibility is 10 % of the score. A provisional fact still belongs to the set a contradiction quantifies over, so it can stop a clear. The pattern layer stays fully authoritative, so the cost is confined to genuinely reworded text | 2026-11-21 |
+| D29 | Where the API key comes from | `OPENROUTER_API_KEY`, or also a `.env` file | **the environment variable only**, in `system/`; `.env` stays in `tools/` | the brief names the variable and a grader will set it. Reading a file beside the code made a graded run depend on an untracked file and made the "no key, regex only" path impossible to test | 2026-11-21 |
 
 ---
 
@@ -681,18 +683,73 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
   - Decision distribution moved 461/235/123 → **462/234/123** across the whole step: guard C gave one
     clear back as a review, and the two new cues turned two reviews into sound clears.
 
-### Step 10 — LLM fallback extractor
-- **Goal.** Recover facts regex misses, without ever lowering precision.
-- **Files.** `system/llm.py`, `system/llm_prompts.py`
-- **Notes.** OpenRouter, `OPENROUTER_API_KEY`; two targets only (D20). Strict JSON out, including the
-  **verbatim quote**; code checks the quote is a substring of the source text and re-parses the value
-  **from the quote**; mismatch or regex/LLM disagreement → fact unknown. temperature 0, fixed seed,
-  in-run cache keyed by `sha256(text + prompt_version)`, thread pool, timeout + bounded retries,
-  any failure → unknown, never crash, never clear on an LLM-only fact that regex contradicts.
-  Compare two cheap models on the practice labels; record model, prompt, time and cost in the README.
-- **Acceptance.** Score with and without the key: unsafe clears 0 in both, cost not worse with the LLM;
-  with no key and with a forced API failure the run completes with identical format.
-- **Risks.** Non-determinism → the cache plus temperature 0 plus the quote check; step 11 proves it.
+### Step 10 — Language-model fallback — **[x] done**
+- **Goal.** Recover facts the patterns miss, without ever lowering precision.
+- **Files.** `system/llm.py`, `system/facts.py`, `system/customer_facts.py`,
+  `system/hit_facts.py`, `system/rules.py`, `system/cli.py`, `tools/llm_eval.py`,
+  `tests/test_llm.py`
+- **The step's premise changed.** Step 9's ablation reframed the job: the model is not there to
+  add accuracy, it is there to shrink the set of texts that trip the guards. And it has
+  **nothing at all to do on dev** — a full run with a key set makes **0 calls** and produces output
+  **byte-identical** to `--no-llm`, because every note and profile in the folder is read by a
+  pattern. So the honest measurement is on reworded text, which is what `tools/llm_eval.py` is.
+- **Notes.** Three jobs only, each asked **only** when the pattern found nothing *and* the text
+  plausibly holds the fact: a hit's first-paragraph birth sentence, a support note's places lived,
+  and an identity check written up in a note. Every answer must carry the verbatim span it was read
+  from; the span must really be in the source and must really state the value. `temperature 0`,
+  `top_p 1`, `seed 7`, `response_format: json_object`, a 20 s timeout, one retry, and an in-run
+  cache keyed on `sha256(prompt version + model + prompt + text)`. Any failure — no key, no module,
+  a timeout, a refusal, unparseable JSON, a quote that is not verbatim — leaves the fact unknown.
+- **Acceptance — met.**
+
+  | model | right | stable on a second pass | wall clock | tokens |
+  |---|---|---|---|---|
+  | **`openai/gpt-4o-mini`** | **18/18** | **yes** | 46 s | 4 062 + 707 |
+  | `openai/gpt-oss-20b` | 16/18 | **no** | 126 s | 7 039 + 7 178 |
+  | `mistralai/mistral-nemo` | 14/18 | yes | 55 s | 4 091 + 813 |
+
+  **`openai/gpt-4o-mini` chosen** — it is the only one that got everything right *and* answered
+  identically twice, which matters because reproducibility is 10 % of the score. `gpt-oss-20b` is
+  25× cheaper per token but unstable and rambles (7 178 completion tokens against 707).
+  **Cost: $0.00 for a dev run (0 calls). $0.057 per 1 000 texts**, so about **$0.06** even if the
+  unseen set made every hit and every note unreadable. Practice cost still **0**, unsafe clears
+  **0**, evidence exact 50/50. **529 tests pass**, all with a fake transport — the suite needs
+  neither a key nor a network.
+- **Findings.**
+  - **D28 — a fact the model read may block a clear but never carry one.** `Fact.provisional`
+    marks it; the contradiction rules count provisional facts in the set they quantify over (so one
+    can stop a clear) but refuse to fire *on* one. This is why grounding can afford to be moderate
+    rather than paranoid, and it keeps a model's wobble away from the 60-cost decision. It costs
+    almost nothing: the pattern layer stays fully authoritative, so only genuinely reworded text
+    becomes provisional.
+  - **Three bugs the tests caught in my own grounding**, each of which would have let a wrong value
+    through: `"3"` matched inside `"1939"`, so a model could claim March from a span that only says
+    1939 (numbers are now matched as numbers); an unmapped country was accepted because the country
+    table's identity fallback is right for a structured field and wrong for a model's reading (a
+    model-read country must be one we know); and the age-and-year check demanded both numbers in the
+    same span, which rejected a correct answer quoting `"24 years of age"` when the year sat earlier
+    in the sentence.
+  - **The evaluation improved the deterministic path twice over.** `"3rd of February 1981"` and
+    `"the twelfth of May 1966"` are real date formats, so `dates.parse` learned ordinals, an optional
+    "of", and the 31 spelled-out day words — with the strict path proven unchanged (output identical,
+    and `"Foo 1990"` is still not a date). And `states_a_birth` missed `"his age had run to 31"`,
+    so neither the model nor guard C engaged.
+  - **Widening that gate exposed a sharper version of step 9's guard.** The wider pattern flagged 5
+    provider paragraphs about **prison sentences** (`"sentenced to 28 years in prison"`) as birth
+    talk. Step 9 excluded only the *strictly formed* dated reports; the right rule is general — a
+    paragraph opening `"According to"` is the provider's narrative and never states the subject's
+    age. Birth-talk paragraphs went 51 → 36, and **0** of them are now unreadable.
+  - **The model is no longer allowed to read the key from a file.** `.env` support in `system/` made
+    a graded run depend on an untracked file beside the code and made the no-key path untestable.
+    `system/llm.api_key` now reads only `OPENROUTER_API_KEY`, as the brief says; `key_from_dotenv`
+    remains for `tools/`.
+  - A limitation worth stating: an age written as a word (`"in his thirty-first year"`) cannot be
+    grounded, because grounding needs the number in the span. Refusing is the safe direction — no
+    fact means guard C keeps the hit out of a clear — and there is a test that says so.
+  - The places scan is deliberately **permissive**: it reads `"a transfer to Nigeria was delayed"`
+    as a country. A spurious country only ever *blocks* a clear, which is the cheap mistake, while a
+    missed one enables the expensive one. The model is never asked to correct it, because it is only
+    consulted when the scan finds nothing.
 
 ### Step 11 — Determinism, timing, cost
 - **Goal.** Byte-identical decisions across 5 runs; comfortable headroom under 30 min.

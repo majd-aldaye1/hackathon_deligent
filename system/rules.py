@@ -21,6 +21,17 @@ from .model import CODE_ORDER, REASON_CODES
 MINIMUM_AGE = 16  # POLICY principle 6: "the customer was younger than 16"
 
 
+def _sure(facts):
+    """The facts a clear may rest on: everything a regular expression read.
+
+    Decision log D28: a fact a language model recovered is `provisional`.  It still counts
+    in the set a contradiction quantifies over — so it can stop a clear — but no clear may
+    be carried by one, because a clear that is wrong costs 60 and a model is not
+    reproducible the way a pattern is.
+    """
+    return [f for f in facts if not getattr(f, "provisional", False)]
+
+
 class Finding(object):
     """One rule that fired, with the facts behind it."""
 
@@ -129,12 +140,14 @@ def temporal_impossibility(customer, hit, screened, variants=None):
     customer_dobs = customer.dob_facts()
     if not customer_dobs:
         return None
+    if not _sure(customer_dobs):
+        return None  # only a model-read date of birth: it may block, not clear
     if customer.is_company:
         # A company cannot act before it exists.
         for fact in customer_dobs:
             if not _strictly_after(fact.value, report):
                 return None
-        chosen = customer_dobs[0]
+        chosen = _sure(customer_dobs)[0]
         return Finding(
             "TEMPORAL_IMPOSSIBILITY",
             facts=(chosen,),
@@ -154,6 +167,12 @@ def temporal_impossibility(customer, hit, screened, variants=None):
     if worst is None:
         return None
     age, fact = worst
+    if getattr(fact, "provisional", False):
+        sure = [f for f in _sure(customer_dobs) if dates.max_age_at(f.value, report) is not None]
+        if not sure:
+            return None
+        fact = max(sure, key=lambda f: dates.max_age_at(f.value, report))
+        age = dates.max_age_at(fact.value, report)
     return Finding(
         "TEMPORAL_IMPOSSIBILITY",
         facts=(fact,),
@@ -188,6 +207,9 @@ def dob_mismatch(customer, hit, screened, variants=None):
     customer_dobs = customer.dob_facts()
     if not hit_dobs or not customer_dobs:
         return None
+    if not _sure(customer_dobs) or not _sure(hit.dobs):
+        # The clear would rest on a model's reading of free text on one side or the other.
+        return None
     if getattr(customer, "verified_dob_may_be_missing", False):
         # An approved identity check exists but we could not read a date of birth out of
         # it.  "Verified beats declared", so a declared date must not clear the hit when
@@ -196,7 +218,7 @@ def dob_mismatch(customer, hit, screened, variants=None):
     for fact in customer_dobs:
         if not dates.all_contradict(fact.value, hit_dobs):
             return None
-    chosen = customer_dobs[0]
+    chosen = _sure(customer_dobs)[0]
     return Finding(
         "DOB_MISMATCH",
         facts=(chosen,) + tuple(hit.dobs),
@@ -214,6 +236,8 @@ def location_mismatch(customer, hit, screened, variants=None):
         # A note says where the customer lived and we could not place it, so "every
         # country tied to the customer" is not a set we actually have.
         return None
+    if not _sure(customer.country_facts()):
+        return None  # every country we have is a model's reading
     if getattr(hit, "dob_unreadable", False) and names_agree(customer, hit, variants)[0]:
         # POLICY's location rule has an exception for a hit "whose name and date of birth
         # agree".  The hit's profile talks about a birth we could not read, so whether the
@@ -233,6 +257,8 @@ def name_mismatch_verified(customer, hit, screened, variants=None):
     if not customer.verified_name_usable():
         return None
     verified = customer.verified_name
+    if getattr(verified, "provisional", False):
+        return None  # a model-read legal name may block a clear, not carry one
     for hit_name in hit.names:
         if names.agree(verified.value, hit_name, hit.is_company or customer.is_company, variants):
             return None

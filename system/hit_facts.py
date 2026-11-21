@@ -72,7 +72,13 @@ _AGE_CUES = [
 # A first paragraph that talks about a birth or an age, whether or not we could pin a date
 # to it.  Used only to tell "this hit states no date of birth" from "this hit states one we
 # could not read" — the second must not be treated as the first.
-_BIRTH_TALK = re.compile(r"\b(born|birth|birthday|aged?|years?\s+old|year-old)\b", re.I)
+_BIRTH_TALK = re.compile(
+    r"\b(born|birth|birthday|aged|age)\b"
+    r"|\b\d{1,3}\s*[-\s]\s*years?\b"
+    r"|\byears?\s+of\s+age\b"
+    r"|\byear[-\s]old\b",
+    re.I,
+)
 
 _MONTH_YEAR = re.compile(r"\b(%s)\s+(\d{4})\b" % MONTH, re.I)
 _BARE_YEAR = re.compile(r"\b(1[89]\d{2}|20\d{2})\b")
@@ -106,8 +112,24 @@ def earliest_dated_report(profile_notes):
     return found[0] if found else None
 
 
+_PROVIDER_PROSE = re.compile(r"^\s*According\s+to\b", re.I)
+
+
 def _is_dated_report(paragraph):
     return bool(DATED_REPORT.match(paragraph.splitlines()[0])) if paragraph else False
+
+
+def is_provider_prose(paragraph):
+    """A paragraph the provider wrote about what happened, not about the subject's age.
+
+    Step 9 excluded the strictly formed dated reports; this is the same point made
+    generally.  "According to the U.S. Courts; On April 23, 2013, ... sentenced to 28
+    years in prison" talks about years without stating an age, and reading one as the
+    other invents a date of birth — the mistake that costs 60.
+    """
+    if not paragraph:
+        return False
+    return bool(_PROVIDER_PROSE.match(paragraph.splitlines()[0]))
 
 
 def _ages_in(text):
@@ -147,10 +169,10 @@ def birth_dates_from_notes(profile_notes):
         parsed = dates.parse(born.group(1))
         if parsed is not None:
             return [parsed]
-    # A dated report is the provider's own prose about an event, not a sentence about the
-    # subject's age.  POLICY gives it its own job (the earliest one bounds how young the
-    # customer could have been), so it never supplies a date of birth.
-    if _is_dated_report(paragraph):
+    # The provider's own prose about an event is not a sentence about the subject's age.
+    # POLICY gives dated reports their own job (the earliest one bounds how young the
+    # customer could have been), so they never supply a date of birth.
+    if is_provider_prose(paragraph):
         return []
     ages = _ages_in(paragraph)
     if len(ages) != 1:
@@ -162,10 +184,19 @@ def birth_dates_from_notes(profile_notes):
     return [dates.Date(y) for y in sorted({year - age, year - age - 1})]
 
 
+def _ask_about_birth(extractor, hit):
+    """Let the model read a birth sentence the patterns could not."""
+    try:
+        found = extractor.hit_birth(first_paragraph(hit.get("profile_notes", "")))
+    except Exception:
+        return []
+    return list(found.dates) if found else []
+
+
 def states_a_birth(profile_notes):
     """True when the first paragraph talks about a birth or an age."""
     paragraph = first_paragraph(profile_notes)
-    if not paragraph or _is_dated_report(paragraph):
+    if not paragraph or is_provider_prose(paragraph):
         return False
     return bool(_BIRTH_TALK.search(paragraph))
 
@@ -277,8 +308,13 @@ def _join(items):
     return "%s or %s" % (", ".join(items[:-1]), items[-1])
 
 
-def gather(data, hit, variants=None):
-    """Build the fact sheet for one hit."""
+def gather(data, hit, variants=None, extractor=None):
+    """Build the fact sheet for one hit.
+
+    `extractor` is the optional language-model fallback, asked only about a first
+    paragraph that talks about a birth the patterns could not read.  POLICY's priority is
+    unchanged: the `dobs` field, then the notes, then search results.
+    """
     keys = country_keys(hit)
     phrase = search_anchor.listing_phrase(
         hit.get("primary_category", ""), hit.get("categories", ())
@@ -294,8 +330,14 @@ def gather(data, hit, variants=None):
     elif not is_company:
         # "For companies, only the `dobs` field is an incorporation date."
         from_notes = birth_dates_from_notes(hit.get("profile_notes", ""))
+        recovered = []
+        if not from_notes and extractor is not None and states_a_birth(hit.get("profile_notes", "")):
+            recovered = _ask_about_birth(extractor, hit)
         if from_notes:
             dobs = [Fact(d) for d in from_notes]
+            origin = FROM_NOTES
+        elif recovered:
+            dobs = [Fact(d, (), True) for d in recovered]
             origin = FROM_NOTES
         else:
             results = search_anchor.matching_results(

@@ -44,8 +44,14 @@ def llm_available(no_llm=False, env=None):
     """
     if no_llm:
         return False
-    env = os.environ if env is None else env
-    return bool(env.get(ENV_KEY, "").strip())
+    if env is not None:
+        return bool(env.get(ENV_KEY, "").strip())
+    try:
+        from . import llm
+
+        return bool(llm.api_key())
+    except Exception:
+        return bool(os.environ.get(ENV_KEY, "").strip())
 
 
 def build_extractor(no_llm=False):
@@ -60,7 +66,8 @@ def build_extractor(no_llm=False):
     try:
         from . import llm
 
-        return llm.build()
+        client = llm.build()
+        return llm.Extractor(client) if client is not None else None
     except Exception:
         return None
 
@@ -107,7 +114,10 @@ def _report(decisions, data, output_file, seconds, extractor, out):
     if failed:
         print("  %d hits could not be checked and were left for review: %s"
               % (len(failed), ", ".join(failed[:5])), file=out)
-    print("  language model: %s" % ("used" if extractor else "not used"), file=out)
+    if extractor is None:
+        print("  language model: not used (regex only)", file=out)
+    else:
+        print("  language model: %s %s" % (extractor.model, extractor.usage.summary()), file=out)
 
 
 def main(argv=None):
