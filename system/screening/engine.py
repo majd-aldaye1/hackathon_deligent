@@ -365,6 +365,11 @@ class Engine:
         verified = checks[-1] if checks else None
         if verified and verified.country:
             countries[verified.country].append(verified.id)
+        # Older approved documents: a country only they give still ties the customer to it.
+        # (Cautious reading: dropping it could turn a real link into a LOCATION_MISMATCH clear.)
+        for ch in reversed(checks[:-1]):
+            if ch.country and ch.country not in countries:
+                countries[ch.country].append(ch.id)
         for cc, nid in places:
             if nid not in countries[cc]:
                 countries[cc].append(nid)
@@ -518,7 +523,8 @@ class Engine:
         comp = etype == "Company"
         name = s(hit.get("name"))
         names = [name] if name else []
-        for a in as_list(hit.get("aliases")):
+        extra = as_list(hit.get("aliases")) + as_list(hit.get("best_matching_name"))
+        for a in extra:
             a = a.get("name") if isinstance(a, dict) else a
             a = T.strip_brackets(s(a)).strip()
             if a and a not in names:
@@ -580,9 +586,26 @@ class Engine:
                         deceased=deceased, listing=listing, search_used=search_used)
 
     # ---------------------------- decision (principles 6-9) ------------------
+    def verified_name_reliable(self, p: Person, comp: bool) -> bool:
+        """A name read out of a free-text note is trusted as the legal name only when the note is
+        anchored to this person: it shares a name part with their records, or its date of birth
+        equals a record's full date of birth. Provider-table names are structured and always trusted."""
+        v = p.verified
+        if v.kind != "note":
+            return True
+        vp = T.name_parts(v.name, comp)
+        rp = {q for n, _ in p.record_names for q in T.name_parts(n, comp)}
+        if any(T.part_match(a, b) for a in vp for b in rp):
+            return True
+        if v.dob and v.dob[2] is not None:
+            for rid in p.records:
+                if self.rec_dob(rid) == v.dob:
+                    return True
+        return False
+
     def customer_names(self, p: Person, comp: bool):
         """Names to compare, with their source ids. Verified legal name outranks the record."""
-        if p.verified and p.verified.name:
+        if p.verified and p.verified.name and self.verified_name_reliable(p, comp):
             vp = T.name_parts(p.verified.name, comp)
             if comp or len(vp) >= 2:
                 return [(p.verified.name, p.verified.id)], True

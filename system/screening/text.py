@@ -504,9 +504,11 @@ def is_country_name(s) -> bool:
 
 
 # free-text country finder (names + demonyms; codes are NOT used in free text)
+_FT_ABBREV = {("UK", "United Kingdom"), ("USA", "United States"), ("US", "United States"),
+              ("UAE", "United Arab Emirates"), ("DRC", "Democratic Republic of the Congo")}
 _FT_TERMS = sorted(
     {(_a, c) for c, (_code, al) in _COUNTRIES.items() for _a in [c] + al
-     if not (len(_a) <= 3 and _a.isupper())},
+     if not (len(_a) <= 3 and _a.isupper())} | _FT_ABBREV,
     key=lambda t: -len(t[0]),
 )
 _FT_RX = re.compile(

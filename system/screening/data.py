@@ -111,6 +111,35 @@ def _parse_variants_json(obj):
     return groups or None, forms or None
 
 
+_SCREENED_KEYS = {
+    "customer_name": ("name", "customer_name", "full_name", "screened_name"),
+    "entity_type": ("entity_type", "type"),
+    "dob": ("dob", "date_of_birth", "birth_date"),
+    "country": ("country",),
+    "city": ("city",),
+}
+
+
+def flatten_screened(alert: dict) -> dict:
+    """The data room nests the customer as screened under `customer` ({name, entity_type, dob,
+    country, city}); the CSV export has them as top-level columns. Expose both the same way."""
+    nested = None
+    for key in ("customer", "screened", "screened_customer", "subject"):
+        if isinstance(alert.get(key), dict):
+            nested = alert[key]
+            break
+    if nested is None:
+        return alert
+    for flat, options in _SCREENED_KEYS.items():
+        if s(alert.get(flat)):
+            continue
+        for o in options:
+            if s(nested.get(o)):
+                alert[flat] = nested[o]
+                break
+    return alert
+
+
 @dataclass
 class Dataset:
     alerts: list = field(default_factory=list)
@@ -125,6 +154,8 @@ class Dataset:
     source: str = ""
 
     def build(self):
+        for a in self.alerts:
+            flatten_screened(a)
         self.hit_by_id = {s(h.get("hit_id")): h for h in self.hits}
         self.alert_by_id = {s(a.get("alert_id")): a for a in self.alerts}
         self.cust_by_id = {s(c.get("record_id")): c for c in self.customers}
@@ -163,6 +194,8 @@ class Dataset:
 
 def load(path: str) -> Dataset:
     """path: a dir containing dev/*.jsonl (or *.jsonl directly), or the CSV browse export."""
+    if not os.path.isdir(path):
+        raise SystemExit(f"data folder not found: {path}")
     ds = Dataset(source=path)
     files = []
     for root, _dirs, fnames in os.walk(path):
@@ -185,4 +218,7 @@ def load(path: str) -> Dataset:
         # so a file layout the generic parser only partly understands can never lose a variant.
         T.configure_names((g or []) + [[w.strip() for w in grp.split(",")] for grp in T.DEFAULT_VARIANT_GROUPS],
                           (fms or []) + [w.strip() for w in T.DEFAULT_LEGAL_FORMS.split(",")])
+    if not ds.alerts or not ds.hits:
+        raise SystemExit(f"no alerts or hits found in {path}: expected alerts.jsonl and hits.jsonl "
+                         f"(or the Alerts/Hits CSV export)")
     return ds.build()

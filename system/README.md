@@ -37,7 +37,7 @@ flowchart LR
 
 | Module | Role |
 |---|---|
-| `screening/data.py` | Loads the JSONL files (or the CSV browse export) and builds the join indexes |
+| `screening/data.py` | Loads the JSONL files (or the CSV browse export), flattens the alert's nested `customer` (the customer as screened), and builds the join indexes |
 | `screening/text.py` | Names (SOP 8): folding, variants, initials, placeholders, legal forms, edit distance. Also dates and countries |
 | `screening/engine.py` | Customer resolution, hit facts, the decision rules, reasons and evidence |
 | `run.py` | The CLI behind `system/run` |
@@ -49,7 +49,7 @@ flowchart LR
 1. **Follow the link.** `account_ref` leads through accounts to customer records, `login_handle` through accounts, and `email` straight to customers. A joint account can lead to several records. The screened name, date of birth, country and city then pick the ones that fit.
 2. **No link: search.** A name index that knows the variants finds candidates across all 72k records. A record fits when one of its full, preferred or login names agrees with the screened name, its date of birth equals the screened one in every part both give, and the screened country and city match its residence, nationality or address.
 3. **One person, one picture.** Union-find joins records that share a phone number *and* the full date of birth, or a document number on an approved check, and anything linked to them in either way. A shared phone or address alone never merges records, because family members share both.
-4. **Verified beats declared.** The latest approved check, from `kyc_checks.jsonl` or an onboarding note in the support tool, gives the legal name, date of birth and document country. Rejected and expired checks are ignored. The customer's countries are residence and nationality on every record, the document country, and places the notes say they lived. Each country keeps the IDs of the records it came from.
+4. **Verified beats declared.** The latest approved check, from `kyc_checks.jsonl` or an onboarding note in the support tool, gives the legal name, date of birth and document country. Rejected and expired checks are ignored. A name read out of a free-text note counts as the legal name only when the note is anchored to this person: it shares a name part with their records, or its date of birth equals theirs. This stops a misread note from clearing a hit on name. The customer's countries are residence and nationality on every record, the document country of every approved check, and places the notes say they lived. Each country keeps the IDs of the records it came from. Older approved documents are included because dropping a real country could turn a genuine link into a location clearance.
 5. If several people fit, each is decided on its own. If they all lead to the same decision it stands. Otherwise the hit is `REVIEW` / `AMBIGUOUS_CUSTOMER_RECORD`. Either way `customer_record_id` is `AMBIGUOUS`.
 
 ## Finding the listed person (SOP 5)
@@ -95,7 +95,7 @@ None. Every rule in the SOP is precise enough to code directly, and a model woul
 
 ## What it doesn't do
 
-- KYC notes are free text. If a note's wording hides the name or date of birth from the parser, the customer is compared on their unverified records instead.
+- KYC notes are free text. If a note's wording hides the name or date of birth from the parser, or the name it yields isn't anchored to the customer, the customer is compared on their unverified records instead. That can mean `REVIEW` where a perfect reading would clear, but never a clearance from a misread note.
 - A hit's age written in a form the patterns don't recognise gives no date of birth, so the hit falls back to `REVIEW` rather than being cleared.
 - Search results are used only when the hit has no other date of birth, and only results that match the listing kind and a country tied to the hit.
 

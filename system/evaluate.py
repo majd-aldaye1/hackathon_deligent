@@ -22,6 +22,8 @@ def main():
     ds = load(args.data)
     eng = Engine(ds)
     labels = ds.labels
+    if not labels:
+        sys.exit(f"no practice labels found in {args.data}: expected practice_labels.jsonl")
     by_alert = {}
     for lab in labels:
         by_alert.setdefault(s(lab.get("alert_id")), []).append(lab)
