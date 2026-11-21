@@ -285,6 +285,7 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 | D23 | Branch | `main` / `dev` | **`dev`** — all work and commits land there | `origin/main` holds a separate complete submission (`4c8e5cd`, `442a9f9`); the user chose to keep this build on `dev` and leave `main` untouched | 2026-11-21 |
 | D24 | A customer name with one real part | may agree / require two matched parts | **may agree**, exactly as principle 8 says ("every part of the shorter name matches") | `preferred_name` is often a bare given name, so this widens the unlinked search. Requiring two matched parts moves ambiguity only 27 → 26 but **loses the customer on 7 unlinked alerts**, and 30 alerts screen a name with fewer than two parts anyway. Extra persons can only make principle 3's unanimity *harder*, so they make clearing less likely, not more — the safe direction | 2026-11-21 |
 | D25 | A verified field the newest check omits | leave it unknown / fall back to an older approved check | **fall back to the most recent approved check that states it** | POLICY names "the most recent approved identity check" as the source for all three fields, but 1 850 provider checks carry no `verified_dob` and 8 note-recorded ones carry no country. An older *approved* check is still verified evidence, and leaving the field unknown would silently demote the customer to their declared data | 2026-11-21 |
+| D26 | Evidence for a hit-only rule (`DECEASED`, `ENTITY_TYPE_MISMATCH`) | cite nothing / cite the customer's records | **cite the person's own records** | the hit is the subject of the decision and is never evidence (no label cites an `H-…`), but principle 9 wants "the records it relied on" and the customer side of both comparisons is the record itself | 2026-11-21 |
 
 ---
 
@@ -535,31 +536,59 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
     `"On June 14, 2024, OFAC added Tor Fredrik Vejdeland to its SDN List"` (a date, no age) and
     `"Entity ID: 13938136"` (a big number, no date) both correctly yield nothing.
 
-### Step 7 — Rules engine, evidence, reasons
-- **Goal.** `(customer_facts, hit_facts) → (decision, reason_code, evidence, reason)`, pure and deterministic.
-- **Files.** `system/rules.py`, `system/reasons.py`, `system/decide.py`
-- **Notes.** Each rule is a function returning a result carrying the facts it used; evidence = union of
-  those facts' `source_ids`, sorted (D9). Order D14. Contradictions: `ENTITY_TYPE_MISMATCH` (D21),
-  `DECEASED` (death date < `screened_at`, partial-aware), `TEMPORAL_IMPOSSIBILITY` (customer < 16 at the
-  earliest dated report, or company incorporated after it), `DOB_MISMATCH` (**every** hit DOB
-  contradicted: birth year > 1 year outside, or same year and a differing month/day both give),
-  `NAME_MISMATCH_VERIFIED` (needs a verified legal name with ≥ 2 real parts), `LOCATION_MISMATCH`
-  (every customer country differs from every hit country — **except** when name **and** DOB agree,
-  which is `REVIEW`). Agreement: person → `NAME_DOB_LOCATION_MATCH` / `NAME_DOB_MATCH`; company →
-  `NAME_LOCATION_MATCH` **only**. Else `REVIEW`/`INSUFFICIENT_DATA`. Multi-person per D10.
-  Reason templates (from the labels):
-  - `"The customer was born in {Y} ({src}), so they were at most {age} when the hit's profile reports activity on {date}."`
-  - `"The customer's date of birth is {dob} ({src}) but the hit's {listed date of birth is {d} | profile notes put its birth year at {y1} or {y2} | search results put its birth year at {y1} or {y2}}."`
-  - `"The customer is linked only to {A, B} but the hit is linked only to {C}."`
-  - `"The customer's verified name is {N} ({src}), which does not match the hit's name {H}."`
-  - `"The customer's date of birth {dob} ({src}) agrees with the hit's {y1} or {y2}. Both the customer and the hit are linked to {C}. The customer's name agrees with the hit's name {H}."`
-  - `"Both the customer and the hit are linked to {C}. The customer's name agrees with the hit's name {H}. Nothing in the customer's records contradicts the hit, and the date of birth cannot be compared with it, so the hit can be neither cleared nor confirmed."`
-  - no-customer: `"No customer record in the system of record fits the alert's screened name {N}, date of birth {d} and country {c}, so the hit cannot be compared with a customer and is left for a person."`
-- **Acceptance.** `tests/test_rules.py` has one case per code built from a fabricated fact sheet,
-  including the location exception and "unknown ≠ mismatch"; all 50 practice labels re-decided from
-  hand-written fact sheets give the label's decision.
-- **Risks.** The location exception and the "every DOB" quantifier are the two easiest to get
-  backwards — both get a dedicated test.
+### Step 7 — Rules engine, evidence, reasons — **[x] done**
+- **Goal.** `(customer_facts, hit_facts) → (decision, reason_code, evidence, reason)`, pure and
+  deterministic.
+- **Files.** `system/rules.py`, `system/reasons.py`, `system/decide.py`, `tools/score.py`,
+  `tests/test_rules.py`, `tests/test_decide.py`, `output/dev.jsonl`
+- **Notes.** Each rule is a function returning a `Finding` that names the facts it used, so
+  `evidence` is `sorted(union(fact.source_ids))` and nothing else. Code order D14. The location
+  exception is applied **after** collecting contradictions: if `LOCATION_MISMATCH` is the *only* one
+  and name **and** date of birth agree, the verdict becomes `REVIEW`. Multi-person handling per
+  principle 3, with the evidence unioned across the people. Every hit is wrapped in a `try`: an
+  exception becomes `REVIEW` / `INSUFFICIENT_DATA` citing nothing, never a clear and never a crash.
+- **Acceptance — met, and better than hoped.** `tools/score.py output/dev.jsonl --data dev`:
+
+  | | |
+  |---|---|
+  | format | **ok** — all 819 lines, every code belongs to its decision, every evidence id is a real record, no hit id cited |
+  | practice cost | **0** (0.00 per hit) |
+  | **unsafe clears** | **0** |
+  | `reason_code` accepted | **50/50** |
+  | `customer_record_id` | **50/50** |
+  | **`evidence` exactly equal to the label's** | **50/50** |
+  | decisions on all 819 | DIFFERENT 461 (56.3 %) · REVIEW 235 (28.7 %) · SAME 123 (15.0 %) |
+  | runtime | 819 hits in **5 s** |
+
+  Codes used: `LOCATION_MISMATCH` 255, `INSUFFICIENT_DATA` 220, `DOB_MISMATCH` 90,
+  `NAME_MISMATCH_VERIFIED` 89, `NAME_DOB_LOCATION_MATCH` 80, `NAME_LOCATION_MATCH` 39,
+  `TEMPORAL_IMPOSSIBILITY` 22, `AMBIGUOUS_CUSTOMER_RECORD` 15, `DECEASED` 4, `NAME_DOB_MATCH` 4,
+  `ENTITY_TYPE_MISMATCH` 1 — **every code in POLICY's table is exercised**, including the three the
+  practice labels never show.
+- **Findings.**
+  - **`evidence` matching the labels exactly on all 50 is the strongest signal yet** that the
+    fact-plus-source model is the right shape. It falls out of `Fact.source_ids` with no separate
+    evidence logic: `H-2808BE` cites `KYC-20EE17` alone, `H-FF3096` cites `NOTE-10AEAB` alone (the
+    note that supplied the *matching* country, not the record that supplied a different one), and
+    `H-13E1CF` cites both customer records plus the check, because two rules fired.
+  - Several reasons come out **word for word identical** to the reference (`H-CF173B`, `H-582410`,
+    `H-02115F`, `H-FF3096`, `H-6C7985`). One differs on purpose: for `H-13E1CF` the reference says
+    "born in 2007 ... at most 13" while we say "born on 2007-08-21 ... at most 12" — the customer's
+    verified date of birth is a full date, so 12 is the true maximum. Both clear the hit.
+  - **The brief wants 2–4 sentences and a single contradiction is one sentence**, so a clear now
+    closes with what else was compared and did not carry it ("Otherwise the customer's name agrees
+    with the hit's name X and the hit gives no date of birth to compare, so the country difference
+    is what settles it"). For `NAME_MISMATCH_VERIFIED` that closing would have read as a
+    contradiction of itself, so it says POLICY's own point instead: "The name on the customer's own
+    record does agree with the hit's, but the verified legal name outranks it."
+  - `tools/score.py` counts sentences with `[.!?](\s+(?=[A-Z0-9])|\s*$)` so that `"Md. Saidul
+    Islam"` and `"U.S. Courts"` do not read as two.
+  - **D26 — a rule whose facts come only from the hit cites the customer's own records** (new
+    decision, logged below), because the hit is never evidence and principle 9 still wants the
+    records the decision relied on.
+  - 50 rules tests pass on fabricated fact sheets, one per clause, including the three cases most
+    easily got backwards: exactly-16 does **not** clear, one year out is **not** a contradiction,
+    and the location exception does **not** save a hit that is also deceased or name-mismatched.
 
 ### Step 8 — `system/run`, end-to-end, first score
 - **Goal.** Executable entry point, one JSON line per hit, in hit order; `output/dev.jsonl`.

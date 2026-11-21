@@ -220,6 +220,15 @@ class HitFacts(object):
     def dob_values(self):
         return [f.value for f in self.dobs]
 
+    def dob_list(self):
+        """The hit's dates of birth as the agreement sentence lists them."""
+        values = self.dob_values()
+        if not values:
+            return ""
+        if self.dob_origin == FROM_FIELD:
+            return _join([v.iso() for v in values])
+        return _join([str(y) for y in sorted({v.year for v in values})])
+
     def dob_description(self):
         """How the reason text should introduce the hit's dates of birth."""
         values = self.dob_values()
