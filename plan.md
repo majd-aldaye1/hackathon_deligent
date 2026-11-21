@@ -751,12 +751,38 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
     missed one enables the expensive one. The model is never asked to correct it, because it is only
     consulted when the scan finds nothing.
 
-### Step 11 — Determinism, timing, cost
-- **Goal.** Byte-identical decisions across 5 runs; comfortable headroom under 30 min.
-- **Files.** `tools/repeat.py`
-- **Acceptance.** 5 runs on dev → identical `(hit_id, decision, reason_code)` triples (diff empty);
-  wall-clock and LLM cost recorded for 819 hits and extrapolated to 550.
-- **Risks.** Set/dict iteration order — sort everywhere (§9); `tools/repeat.py` is the proof.
+### Step 11 — Determinism, timing, cost — **[x] done**
+- **Goal.** Identical decisions across five runs, and comfortable headroom under 30 minutes.
+- **Files.** `tools/repeat.py`, `tests/test_determinism.py`
+- **Notes.** Repeating the same run is the weak test — a pipeline with a dict-order bug passes it
+  every time. The unseen set is a *different file* with different rows in a different order, so
+  `tools/repeat.py --shuffle` writes a folder with **every table's rows reordered** and checks each
+  hit still decides the same way. That is the property that actually transfers.
+- **Acceptance — met.**
+
+  | | |
+  |---|---|
+  | 5 runs of `system/run` on dev | **byte-identical**, all five |
+  | 3 runs with the model enabled | **byte-identical** (0 calls on dev) |
+  | every table's rows reordered | **every one of the 819 hits decides the same**, reason and evidence included |
+  | wall clock | 11.6 s per run for 819 hits — **14.2 ms per hit** |
+  | extrapolated to 550 hits | **7.8 s** against the brief's 1800 s — 230× headroom |
+  | model cost | **$0.00** on dev (no calls); $0.057 per 1 000 texts if the unseen set needs it |
+
+  **536 tests pass.**
+- **Findings.**
+  - **Nothing in the pipeline depends on row order**, which is the result worth having. The suite
+    now asserts it four ways: whole-pipeline reordering of all nine tables, person grouping under a
+    shuffled customers table, alert resolution under a shuffled accounts table, and a fixture where
+    three people fit one alert so every tie-break in the resolver is exercised.
+  - The reported `customer_record_id` is the lowest of the person's record ids, so it is the same
+    whichever row the file happens to list first — asserted directly rather than assumed.
+  - The output deliberately follows the hits file's own order, so a reordered input gives a
+    reordered output with identical content. `tools/repeat.py` compares by `hit_id` for that case
+    and line by line otherwise.
+  - A slow test of my own making, worth recording: the first version of the resolution test rebuilt
+    the 72 000-record person index inside a 440-iteration loop — eight minutes of pure waste for a
+    property one index proves.
 
 ### Step 12 — Safety review of clears
 - **Goal.** Convince ourselves the 60-cost error is not happening on unlabelled data.
