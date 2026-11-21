@@ -49,7 +49,7 @@ def explain(data, hit_id, variants=None):
     line("entity type", screened.entity_type)
     line("date of birth", screened.dob)
     line("country / city", "%s / %r" % (screened.country, screened.city))
-    line("link", "%s = %r" % (screened.link_kind, screened.link_value))
+    line("link", ", ".join("%s = %r" % link for link in screened.links) or resolve.NO_LINK)
     line("screened at", screened.screened_at)
 
     print("-" * 78)

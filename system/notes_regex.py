@@ -288,9 +288,19 @@ def parse_kyc_note(note):
 # Used only to notice when such a note names no country we recognise: POLICY counts those
 # places among the customer's countries, so failing to read one makes the country set
 # incomplete, and an incomplete set must not clear a hit.
+#
+# Where a phrase is loose on its own ("the email was from", "born in 1980"), it must be
+# followed by a capitalised word, which is where a place name would be.  (?-i:...) keeps
+# that one letter case-sensitive inside an otherwise case-insensitive pattern.
+_PLACE_NAME = r"(?-i:[A-Z])"
 _RESIDENCE_CUES = re.compile(
-    r"\b(lived|living|resid\w*|home|household|based|employ\w*|work\w*|job|career"
-    r"|relocat\w*|stay\w*|moved|settled)\b",
+    r"\b(?:"
+    r"(?:lived|living|resid\w*|home|household|based|employ\w*|work\w*|job|career"
+    r"|relocat\w*|stay\w*|moved|settled|grew\s+up|raised\s+in|studied\s+in"
+    r"|spent\s+\w+\s+years?\s+(?:in|at|living|working)"
+    r"|originally\s+from|hails\s+from|native\s+(?:of|to))\b"
+    r"|(?:born\s+in|(?:is|was|comes?|came)\s+from)\s+" + _PLACE_NAME +
+    r")",
     re.I,
 )
 
