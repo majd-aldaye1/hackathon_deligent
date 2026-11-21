@@ -283,6 +283,7 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 | D21 | Entity type comparison | alert type vs hit / customer type vs hit | **resolved customer's `entity_type` vs hit's**; with no customer, no type rule | POLICY principle 6 "one is a person and the other a company" is about the customer; the single dev case (`A-41F2A9`) resolves to a Company customer vs an Individual hit either way | 2026-11-21 |
 | D22 | Dated-report punctuation | accept `;` after the date / require `:` | **require `:`** — exactly the form POLICY gives | POLICY: "exactly the English lines … of the form"; 13 lines across 11 hits use `;`. Dropping a report can only move the *earliest* report later, which makes the customer older and a `TEMPORAL_IMPOSSIBILITY` clear less likely — the safe direction against the 60-cost error | 2026-11-21 |
 | D23 | Branch | `main` / `dev` | **`dev`** — all work and commits land there | `origin/main` holds a separate complete submission (`4c8e5cd`, `442a9f9`); the user chose to keep this build on `dev` and leave `main` untouched | 2026-11-21 |
+| D24 | A customer name with one real part | may agree / require two matched parts | **may agree**, exactly as principle 8 says ("every part of the shorter name matches") | `preferred_name` is often a bare given name, so this widens the unlinked search. Requiring two matched parts moves ambiguity only 27 → 26 but **loses the customer on 7 unlinked alerts**, and 30 alerts screen a name with fewer than two parts anyway. Extra persons can only make principle 3's unanimity *harder*, so they make clearing less likely, not more — the safe direction | 2026-11-21 |
 
 ---
 
@@ -411,20 +412,39 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
     DE"`), with pieces under three letters dropped so a state code cannot match inside an unrelated
     word, and accent folding so screened `"München"` matches the record's `"München"`.
 
-### Step 4 — Customer resolver: unlinked alerts, person merge, ambiguity
+### Step 4 — Customer resolver: unlinked alerts, person merge, ambiguity — **[x] done**
 - **Goal.** The 146 unlinked alerts, plus union-find person merging, plus the ambiguity verdict.
-- **Files.** `system/resolve.py`, `system/persons.py`
-- **Notes.** Blocking on name parts (and their variant-group siblings) over 72 k customers; fit test =
-  name agrees (full/preferred/login, and the account's `login_handle`) **and** DOB equal in every part
-  both give **and** screened country ∈ {nationality, residence} **and** every comma/slash piece of the
-  screened city found in `city` or `address`, each criterion skipped when the alert omits it.
-  Merge: same phone **and** same **full** DOB, **or** same document number on approved checks;
-  union-find for transitivity. Never merge on phone or address alone. Then expand each seed record to
-  its whole person.
-- **Acceptance.** 12/12 unlinked practice labels resolve to a superset of the expected ids;
-  `tests/test_merge.py` asserts the 116 phone+DOB pairs and 7 document pairs merge, that shared-phone/
-  different-DOB records do **not**, and that transitivity works; resolution of all 440 alerts < 60 s.
-- **Risks.** A too-wide blocking index makes this slow — measured at 2 s in the prototype.
+- **Files.** `system/kyc.py`, `system/persons.py`, `system/resolve.py`, `tests/fixture.py`,
+  `tests/test_persons.py`, `tests/test_resolve_search.py`
+- **Notes.** Blocking index on name parts **and their variant-group siblings** over 72 k customers,
+  then the step-3 fit test. Merge: same phone **and** same **full** date of birth, **or** the same
+  document number on approved checks; union-find for transitivity; the lowest record id is the
+  representative, so `customer_record_id` never depends on file order. `system/kyc.py` holds the
+  chain customer → accounts → onboarding on **both** keys → applicant → checks, shared with step 5.
+- **Acceptance — met.** **228 tests pass** (38 new), 40 s. On the real folder: **every one of the
+  440 alerts resolves to at least one person**; resolution paths are 170 `account_ref` / 70
+  `login_handle` / 54 `email` / 146 `search`; **27 alerts are ambiguous and all 27 come from the
+  search**; **all 50 practice labels** resolve to what they expect — every record the label lists is
+  found, the reported `customer_record_id` is one the label accepts, and both ambiguous labels come
+  back `AMBIGUOUS` with exactly the records their `path` names (`H-CDEC83`'s three records group into
+  **two** persons, as its path says); resolution is identical across two runs; all 440 alerts resolve
+  in **4 s**.
+- **Findings.**
+  - **123 persons hold more than one record** (116 merged by phone + full DOB, 7 by document number,
+    no overlap), every one of them a pair. **88 shared-phone pairs are correctly left unmerged** —
+    the family-member trap is real and the tests pin it.
+  - **Nothing in dev resolves to "no customer".** The 8 alerts my Phase-A prototype could not resolve
+    were its own bugs (the missing `Month YYYY` date format and a weaker name matcher). The
+    no-customer path is still built and tested, because the unseen set may need it.
+  - **D24 — a single-part customer name may agree** (new decision, logged below). `preferred_name` is
+    often just a given name (`"Ibrahim"` on `CUS-497550`), and principle 8's "every part of the
+    shorter name matches" makes it agree with any `"Ibrahim X"`. Measured both ways: requiring two
+    matched parts would reduce ambiguity only from **27 to 26** while **losing the customer entirely
+    on 7 unlinked alerts**, and 30 alerts screen a name with fewer than two parts in the first place
+    (one-word company names like `"Pescanova"`, `"Binanfx"`). So the literal reading is kept.
+  - Every customer in dev reaches **at most one** KYC applicant, and every onboarding row's
+    `account_id` really belongs to the customer it names — both asserted, so the both-key join is
+    verified rather than assumed.
 
 ### Step 5 — Verified customer picture
 - **Goal.** The person's fact sheet: verified legal name, DOBs, countries, entity type, each with `source_ids`.

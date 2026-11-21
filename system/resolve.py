@@ -207,3 +207,93 @@ def seed_records(data, screened, variants=None):
     customers = [data.customer_by_id[i] for i in ids]
     chosen = choose_among(screened, customers, variants)
     return chosen, screened.link_kind
+
+
+# ------------------------------------------------------- searching without a link
+
+
+def search_record_ids(data, screened, variants=None):
+    """Find the records that fit what was screened, when the alert carries no link.
+
+    POLICY principle 2: "Without a link, find the records that fit what was screened: a
+    full, preferred or login name that agrees with the screened name ..., a date of birth
+    equal to the screened one in every part both give, the screened country as residence
+    or nationality, and the screened city in the record's city or address."
+
+    A blocking index on name parts keeps this to a few hundred comparisons instead of
+    72 000: a record can only agree on name if it shares a name part with the screened
+    name or with one of that part's variant-group siblings.
+    """
+    index = data.name_index(names.tokens)
+    tokens = names.tokens(screened.name, screened.is_company, variants)
+    blocked = set()
+    for token in tokens:
+        blocked.update(index.get(token, ()))
+    return sorted(
+        record_id
+        for record_id in blocked
+        if fits(screened, data.customer_by_id[record_id], variants)
+    )
+
+
+# ----------------------------------------------------------------- the resolution
+
+
+class Resolution(object):
+    """Who the alert is about: zero, one, or several persons."""
+
+    __slots__ = ("screened", "persons", "how", "seed_ids")
+
+    def __init__(self, screened, persons, how, seed_ids):
+        self.screened = screened
+        # each person is a sorted tuple of their record ids
+        self.persons = list(persons)
+        self.how = how
+        self.seed_ids = list(seed_ids)
+
+    @property
+    def found(self):
+        return bool(self.persons)
+
+    @property
+    def ambiguous(self):
+        """POLICY principle 3: "If more than one person fits an alert, decide the hit for
+        each ... Either way `customer_record_id` is `AMBIGUOUS`." """
+        return len(self.persons) > 1
+
+    @property
+    def record_ids(self):
+        """Every record of every person that fits."""
+        out = []
+        for person in self.persons:
+            for record_id in person:
+                if record_id not in out:
+                    out.append(record_id)
+        return out
+
+    def customer_record_id(self):
+        """What goes in the output: a record id, "AMBIGUOUS", or None."""
+        if not self.persons:
+            return None
+        if self.ambiguous:
+            return "AMBIGUOUS"
+        return self.persons[0][0]
+
+    def __repr__(self):
+        return "Resolution(%s, how=%s, persons=%r)" % (
+            self.screened.alert_id, self.how, self.persons
+        )
+
+
+SEARCH = "search"
+
+
+def resolve_customer(data, persons, screened, variants=None):
+    """The whole of principles 2 and 3: follow the link or search, then merge."""
+    seeds, how = seed_records(data, screened, variants)
+    seed_ids = [r["record_id"] for r in seeds]
+    if not seed_ids and screened.link_kind == NO_LINK:
+        seed_ids = search_record_ids(data, screened, variants)
+        how = SEARCH
+    groups = persons.persons_of(seed_ids)
+    return Resolution(screened, groups, how, seed_ids)
