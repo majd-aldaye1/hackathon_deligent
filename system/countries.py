@@ -4,8 +4,10 @@ POLICY.md principle 6: "Codes and nationalities are countries; territories count
 own country."  So GB, United Kingdom and British are one key, while Macao and China, or
 Puerto Rico and the United States, are not.
 
-A string the table does not know becomes its own key (folded text).  That way an unmapped
-spelling can neither fake an agreement nor fake a mismatch: it only ever equals itself.
+A string the table does not know becomes an UNMAPPED key ("?" + folded text).  It still
+equals itself, so the same unknown text on both sides agrees, but it is never evidence of a
+difference: LOCATION_MISMATCH does not fire while either side holds one (rules.py).  A bare
+unknown key would be different from every real country and so fake a mismatch.
 """
 
 import re
@@ -189,7 +191,83 @@ _ROWS = [
     ('Yemen',                            'YE YEM',    'Yemeni'),
     ('Zambia',                           'ZM ZMB',    'Zambian'),
     ('Zimbabwe',                         'ZW ZWE',    'Zimbabwean'),
+    # small states and territories the table lacked (territories count as their own country)
+    ('Antigua and Barbuda',              'AG ATG',    'Antiguan'),
+    ('Saint Kitts and Nevis',            'KN KNA',    'St Kitts and Nevis|St. Kitts and Nevis'),
+    ('Saint Lucia',                      'LC LCA',    'St Lucia|St. Lucia|Saint Lucian'),
+    ('Saint Vincent and the Grenadines', 'VC VCT',    'St Vincent and the Grenadines|St. Vincent and the Grenadines'),
+    ('Timor-Leste',                      'TL TLS',    'Timor Leste|East Timor|Timorese'),
+    ('Holy See',                         'VA VAT',    'Vatican|Vatican City|Vatican City State'),
+    ('San Marino',                       'SM SMR',    'Sammarinese'),
+    ('Samoa',                            'WS WSM',    'Samoan'),
+    ('Tonga',                            'TO TON',    'Tongan'),
+    ('Vanuatu',                          'VU VUT',    ''),
+    ('Solomon Islands',                  'SB SLB',    ''),
+    ('Kiribati',                         'KI KIR',    ''),
+    ('Nauru',                            'NR NRU',    ''),
+    ('Tuvalu',                           'TV TUV',    ''),
+    ('Palau',                            'PW PLW',    ''),
+    ('Marshall Islands',                 'MH MHL',    ''),
+    ('Micronesia',                       'FM FSM',    'Federated States of Micronesia|Micronesia, Federated States of'),
+    ('Sao Tome and Principe',            'ST STP',    ''),
+    ('Dominica',                         'DM DMA',    ''),
+    ('Grenada',                          'GD GRD',    'Grenadian'),
+    ('Bhutan',                           'BT BTN',    'Bhutanese'),
+    ('Comoros',                          'KM COM',    ''),
+    ('Djibouti',                         'DJ DJI',    ''),
+    ('Lesotho',                          'LS LSO',    ''),
+    ('Guinea-Bissau',                    'GW GNB',    'Guinea Bissau'),
+    ('Equatorial Guinea',                'GQ GNQ',    ''),
+    ('Western Sahara',                   'EH ESH',    ''),
+    ('Falkland Islands',                 'FK FLK',    ''),
+    ('Reunion',                          'RE REU',    ''),
+    ('Martinique',                       'MQ MTQ',    ''),
+    ('Guadeloupe',                       'GP GLP',    ''),
+    ('French Guiana',                    'GF GUF',    ''),
+    ('Mayotte',                          'YT MYT',    ''),
+    ('Sint Maarten',                     'SX SXM',    ''),
+    ('Cook Islands',                     'CK COK',    ''),
+    ('Aruba',                            'AW ABW',    ''),
+    ('Greenland',                        'GL GRL',    ''),
+    ('Turks and Caicos Islands',         'TC TCA',    ''),
+    ('Anguilla',                         'AI AIA',    ''),
+    ('Montserrat',                       'MS MSR',    ''),
+    ('US Virgin Islands',                'VI VIR',    'U.S. Virgin Islands|Virgin Islands, U.S.'),
+    ('Guam',                             'GU GUM',    ''),
+    ('American Samoa',                   'AS ASM',    ''),
+    ('New Caledonia',                    'NC NCL',    ''),
+    ('French Polynesia',                 'PF PYF',    ''),
+    ('Faroe Islands',                    'FO FRO',    ''),
 ]
+
+# Territories: a place string that names one of these and its parent state belongs to the
+# territory ("Hong Kong, China"), which POLICY counts as its own country.
+TERRITORIES = frozenset([
+    'Hong Kong', 'Macao', 'Taiwan', 'Puerto Rico', 'Jersey', 'Guernsey', 'Isle of Man', 'Gibraltar',
+    'Bermuda', 'Cayman Islands', 'British Virgin Islands', 'US Virgin Islands', 'Northern Mariana Islands',
+    'Guam', 'American Samoa', 'Greenland', 'Faroe Islands', 'Aruba', 'Curacao', 'New Caledonia',
+    'French Polynesia', 'Anguilla', 'Montserrat', 'Turks and Caicos Islands', 'Western Sahara',
+    'Falkland Islands', 'Reunion', 'Martinique', 'Guadeloupe', 'French Guiana', 'Mayotte', 'Sint Maarten',
+    'Cook Islands', 'Kosovo', 'Palestine',
+])
+
+# Words that only describe a state's form: "Iran, Islamic Republic of", "Kingdom of Saudi
+# Arabia", "Republic of Turkey".
+_FORM_WORDS = re.compile(
+    r"\b(republic|kingdom|state|states|province|federation|federal|people s|peoples|people|islamic|"
+    r"democratic|plurinational|bolivarian|united|arab|socialist|commonwealth|principality|"
+    r"sultanate|of|the)\b"
+)
+_FORM_PREFIX = re.compile(
+    r"^(?:the )?(?:(?:islamic|federal|democratic|socialist|people s|peoples|united|arab) )*"
+    r"(?:republic|kingdom|state|commonwealth|federation|principality|sultanate|emirate) of (?:the )?"
+)
+
+UNMAPPED = "?"
+
+
+def is_unmapped(k):
+    return bool(k) and k.startswith(UNMAPPED)
 
 # POLICY.md principle 5: ""International" and "Europe" are not countries."  Regions and
 # continents are not countries either, so they never tie an entity to a place.
@@ -270,8 +348,12 @@ def key(text):
         return None
     if not bare or not re.search(r"[a-z]", bare):
         return None
-    # Unknown to the table: the string is its own key, so it equals only itself.
-    return bare
+    stripped = _FORM_PREFIX.sub("", bare)
+    if stripped != bare and stripped in _LOOKUP:
+        return _LOOKUP[stripped]
+    # Unknown to the table: an UNMAPPED key.  It equals only itself, and it never counts
+    # as a difference (see the module docstring).
+    return UNMAPPED + bare
 
 
 def key_from_place(text):
@@ -285,17 +367,33 @@ def key_from_place(text):
     whole = norm.fold(norm.drop_brackets(text))
     if whole in _LOOKUP:
         return _LOOKUP[whole]
-    tail = norm.tail_segment(text)
-    if tail:
-        folded = norm.fold(tail)
-        if folded in _LOOKUP:
-            return _LOOKUP[folded]
-        bare = " ".join(norm.words(tail))
-        if bare in _LOOKUP:
-            return _LOOKUP[bare]
-    # Nothing in the table: fall back to the whole string's own key, so an unrecognised
-    # country still equals itself rather than silently disappearing.
-    return key(tail or text)
+    cleaned = norm.drop_brackets(text or "").strip().strip(".,;")
+    pieces = [p.strip() for p in cleaned.split(",") if p.strip()]
+    # a trailing postcode is not the country: "..., Lagos, Nigeria, 100001"
+    while len(pieces) > 1 and any(ch.isdigit() for ch in pieces[-1]):
+        pieces.pop()
+    if not pieces:
+        return None
+    found = [_known(p) for p in pieces]
+    # "Hong Kong, China": the territory is the place, not its parent state
+    for k in found:
+        if k in TERRITORIES:
+            return k
+    # "Iran, Islamic Republic of": the other pieces only describe the state's form
+    if found[0] and all(not _FORM_WORDS.sub("", " ".join(norm.words(p))).strip() for p in pieces[1:]):
+        return found[0]
+    # "Sassari, Sassari, Italy": the country is named last
+    if found[-1]:
+        return found[-1]
+    # Nothing recognisable: key() gives None for "not a country" or an UNMAPPED key, never
+    # a bare string that would differ from every real country.
+    return key(pieces[-1])
+
+
+def _known(text):
+    """A known country key for one piece of text, or None."""
+    k = key(text)
+    return k if k and not is_unmapped(k) else None
 
 
 def mentioned_in(text, keys=None):
@@ -338,4 +436,7 @@ _NAME_PATTERNS = _name_patterns()
 
 def display(keys):
     """Country keys as the reason text should list them: sorted, comma separated."""
-    return ", ".join(sorted(set(k for k in keys if k)))
+    shown = []
+    for k in sorted(set(k for k in keys if k)):
+        shown.append("%s (an unrecognised place)" % k[len(UNMAPPED):] if is_unmapped(k) else k)
+    return ", ".join(shown)

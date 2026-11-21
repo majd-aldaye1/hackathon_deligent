@@ -215,11 +215,13 @@ class TestGatherPriority(unittest.TestCase):
         with fixture.Folder(**tables) as data:
             return hf.gather(data, row)
 
-    def test_the_dobs_field_wins(self):
+    def test_the_dobs_field_and_the_notes_both_count(self):
+        # "Every birth date the hit gives": a first-paragraph birth is one the hit gives
+        # too, so it joins the field's dates (one agreeing date blocks a clear).
         row = hit(dobs=["1996", "1997"], profile_notes="He was born in 1950.")
         facts = self._gather(row)
-        self.assertEqual(facts.dob_origin, hf.FROM_FIELD)
-        self.assertEqual([d.iso() for d in facts.dob_values()], ["1996", "1997"])
+        self.assertEqual(facts.dob_origin, hf.FROM_FIELD_AND_NOTES)
+        self.assertEqual([d.iso() for d in facts.dob_values()], ["1996", "1997", "1950"])
 
     def test_the_notes_come_next(self):
         row = hit(profile_notes="Ada Lovelace was born in 1815.")

@@ -64,6 +64,58 @@ def parts_match(left, right, variants=None):
     return norm.levenshtein(left, right, cap=threshold) <= threshold
 
 
+def _joined_match(whole, first, second, variants):
+    """`whole` written together against `first` + `second` written apart.
+
+    A piece shorter than 4 letters must be identical (principle 8), so when either piece
+    is that short the join must be exact.  Otherwise the edit allowance lets a long part
+    swallow a short one: "logistics" is 2 edits from "st" + "logistics".
+    """
+    if min(len(first), len(second)) < 4:
+        return whole == first + second
+    return parts_match(whole, first + second, variants)
+
+
+def _covers_shorter(short, long_, variants):
+    """Can every part of the shorter name be matched, each long part used at most once?
+
+    A join counts as one matched part that covers both pieces (principle 8: "Abdulsalam
+    matches Abdul Salam, counting as one part that covers both"), so "Blue Grass" is
+    fully covered by "Bluegrass".
+    """
+    n, m = len(short), len(long_)
+    if n > MAX_EXHAUSTIVE_PARTS or m > MAX_EXHAUSTIVE_PARTS:
+        return False
+    cache = {}
+
+    def go(i, used):
+        if i >= n:
+            return True
+        key = (i, used)
+        if key in cache:
+            return cache[key]
+        ok = False
+        for j in range(m):
+            if used & (1 << j):
+                continue
+            if parts_match(short[i], long_[j], variants) and go(i + 1, used | (1 << j)):
+                ok = True
+                break
+            if (j + 1 < m and not used & (1 << (j + 1))
+                    and _joined_match(short[i], long_[j], long_[j + 1], variants)
+                    and go(i + 1, used | (1 << j) | (1 << (j + 1)))):
+                ok = True
+                break
+            if (i + 1 < n and _joined_match(long_[j], short[i], short[i + 1], variants)
+                    and go(i + 2, used | (1 << j))):
+                ok = True
+                break
+        cache[key] = ok
+        return ok
+
+    return go(0, 0)
+
+
 def _match_count(left, right, variants):
     """The largest number of parts that can be matched, each part used at most once.
 
@@ -93,16 +145,15 @@ def _match_count(left, right, variants):
                 result = max(result, 1 + best(i + 1, used_right | (1 << j)))
             # left[i] written as two adjacent right parts joined
             if j + 1 < m and not used_right & (1 << (j + 1)):
-                if parts_match(left[i], right[j] + right[j + 1], variants):
+                if _joined_match(left[i], right[j], right[j + 1], variants):
                     joined = used_right | (1 << j) | (1 << (j + 1))
                     result = max(result, 1 + best(i + 1, joined))
         # left[i] and left[i+1] written together matching one right part
         if i + 1 < n:
-            joined_left = left[i] + left[i + 1]
             for j in range(m):
                 if used_right & (1 << j):
                     continue
-                if parts_match(joined_left, right[j], variants):
+                if _joined_match(right[j], left[i], left[i + 1], variants):
                     result = max(result, 1 + best(i + 2, used_right | (1 << j)))
         cache[key] = result
         return result
@@ -140,6 +191,13 @@ def compare_parts(left, right, variants=None):
     matched = _match_count(left, right, variants)
     shorter = min(len(left), len(right))
     agree = matched >= 2 or matched >= shorter
+    if not agree:
+        # With names of equal length either one is "the shorter"; trying both can only
+        # make agreement easier, which makes a name-based clear harder (the safe side).
+        if len(left) <= len(right):
+            agree = _covers_shorter(left, right, variants)
+        if not agree and len(right) <= len(left):
+            agree = _covers_shorter(right, left, variants)
     return agree, matched
 
 

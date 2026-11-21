@@ -97,6 +97,10 @@ def countries_disjoint(customer, hit):
     hit_keys = set(hit.countries)
     if not customer_keys or not hit_keys:
         return False
+    if any(countries.is_unmapped(k) for k in customer_keys | hit_keys):
+        # A place we could not recognise might be the shared country, so the sets are
+        # not known to differ.
+        return False
     return not (customer_keys & hit_keys)
 
 
@@ -105,9 +109,12 @@ def countries_disjoint(customer, hit):
 
 def entity_type_mismatch(customer, hit, screened, variants=None):
     """"**Type:** one is a person and the other a company." """
-    if not customer.entity_type or not hit.entity_type:
+    left, right = _kind(customer.entity_type), _kind(hit.entity_type)
+    if not left or not right:
+        # Only "a person" and "a company" are known kinds; anything else (Vessel,
+        # Aircraft, Unknown) is unknown, and an unknown is not a difference.
         return None
-    if customer.entity_type == hit.entity_type:
+    if left == right:
         return None
     return Finding(
         "ENTITY_TYPE_MISMATCH",
@@ -115,6 +122,15 @@ def entity_type_mismatch(customer, hit, screened, variants=None):
         customer_type=customer.entity_type,
         hit_type=hit.entity_type,
     )
+
+
+def _kind(entity_type):
+    v = (entity_type or "").strip().lower()
+    if v.startswith(("ind", "person", "natural")):
+        return "person"
+    if v.startswith(("comp", "org", "corp", "entity", "business", "legal")):
+        return "company"
+    return None
 
 
 def deceased(customer, hit, screened, variants=None):
@@ -255,6 +271,10 @@ def name_mismatch_verified(customer, hit, screened, variants=None):
     """"the customer's verified legal name agrees with none of the hit's names or aliases
     ..., even if the name on their record does." """
     if not customer.verified_name_usable():
+        return None
+    company = hit.is_company or customer.is_company
+    if not any(names.parts(n, company, variants) for n in hit.names):
+        # The hit has no real name part to disagree with ("S.R.L." is only a legal form).
         return None
     verified = customer.verified_name
     if getattr(verified, "provisional", False):

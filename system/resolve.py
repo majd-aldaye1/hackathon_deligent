@@ -29,7 +29,7 @@ class Screened(object):
     """The customer as screened: what the alert says about them."""
 
     __slots__ = ("alert_id", "screened_at", "name", "entity_type", "dob", "country",
-                 "city", "city_pieces", "link_kind", "link_value")
+                 "city", "city_pieces", "link_kind", "link_value", "links")
 
     def __init__(self, alert):
         self.alert_id = alert.get("alert_id", "")
@@ -41,6 +41,7 @@ class Screened(object):
         self.city = alert.get("city", "")
         self.city_pieces = _city_pieces(self.city)
         self.link_kind, self.link_value = _link(alert)
+        self.links = _links(alert)
 
     @property
     def is_company(self):
@@ -48,6 +49,11 @@ class Screened(object):
 
     def __repr__(self):
         return "Screened(%s, %r)" % (self.alert_id, self.name)
+
+
+def _links(alert):
+    """Every link field the alert carries, in the order account, login, email."""
+    return [(kind, alert.get(kind, "")) for kind in (ACCOUNT_REF, LOGIN_HANDLE, EMAIL) if alert.get(kind, "")]
 
 
 def _link(alert):
@@ -159,19 +165,23 @@ def linked_record_ids(data, screened):
     holders).  login_handle -> Accounts.login_handle -> customer_id.  email ->
     Customers.email.
     """
+    # Every link field the alert carries is followed, not just the first: if an account
+    # and an email lead to different people, the screened details then pick between them,
+    # and if they cannot, the hit is decided for each (principle 3) instead of silently
+    # trusting one link.
     ids = []
-    if screened.link_kind == ACCOUNT_REF:
-        for account in data.accounts_by_id.get(screened.link_value, ()):
-            if account.get("customer_id") and account["customer_id"] not in ids:
-                ids.append(account["customer_id"])
-    elif screened.link_kind == LOGIN_HANDLE:
-        for account in data.accounts_by_login.get(screened.link_value, ()):
-            if account.get("customer_id") and account["customer_id"] not in ids:
-                ids.append(account["customer_id"])
-    elif screened.link_kind == EMAIL:
-        for customer in data.customers_by_email.get(screened.link_value.lower(), ()):
-            if customer["record_id"] not in ids:
-                ids.append(customer["record_id"])
+    for kind, value in getattr(screened, "links", None) or [(screened.link_kind, screened.link_value)]:
+        if kind == ACCOUNT_REF:
+            rows = [a.get("customer_id") for a in data.accounts_by_id.get(value, ())]
+        elif kind == LOGIN_HANDLE:
+            rows = [a.get("customer_id") for a in data.accounts_by_login.get(value, ())]
+        elif kind == EMAIL:
+            rows = [c["record_id"] for c in data.customers_by_email.get(value.lower(), ())]
+        else:
+            rows = []
+        for id_ in rows:
+            if id_ and id_ not in ids:
+                ids.append(id_)
     return sorted(id_ for id_ in ids if id_ in data.customer_by_id)
 
 

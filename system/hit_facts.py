@@ -22,6 +22,7 @@ from .facts import Fact, merge
 FROM_FIELD = "field"
 FROM_NOTES = "notes"
 FROM_SEARCH = "search"
+FROM_FIELD_AND_NOTES = "field+notes"
 
 MONTH = "|".join(dates.MONTH_NAMES)
 
@@ -43,10 +44,18 @@ _BORN_ON = re.compile(
     re.I,
 )
 
+# A labelled date of birth in a record-style first paragraph: "DOB: 6/20/1955".
+_DOB_LABEL = re.compile(
+    r"\b(?:DOB|D\.O\.B\.?|Date of Birth|Birth ?date)\s*[:\-]\s*("
+    r"\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{1,2}-\d{1,2}"
+    r"|\d{1,2}\s+(?:%s)\s+\d{4}|(?:%s)\s+\d{1,2},\s*\d{4})" % (MONTH, MONTH),
+    re.I,
+)
+
 # A one-to-three digit number that is not part of a longer one.  Without the lookarounds,
 # "PKR 11,000,000" reads as an age of 100 — and an invented date of birth could clear a
 # hit that really is the customer.
-_AGE_NUM = r"(?<!\d)(?<![\d][,.\-/])(\d{1,3})(?!\d)(?![,.\-/]\d)"
+_AGE_NUM = r"(?<!\d)(?<![\d][,.\-/])(\d{1,3})(?!\d)(?![,.\-/]\d)(?![a-zA-Z])"
 
 # An age stated against a date.  Deliberately a closed list of phrasings: a bare number in
 # a paragraph of prose is far more likely to be a quantity or a sum of money than an age.
@@ -60,12 +69,19 @@ _AGE_CUES = [
     re.compile(r"\bthey\s+were\s+" + _AGE_NUM, re.I),
     re.compile(r"\bthen\s+" + _AGE_NUM, re.I),
     re.compile(r"\bwas\s+" + _AGE_NUM + r"\s+when\b", re.I),
+    re.compile(r"\bwas\s+" + _AGE_NUM + r"\s+(?:at|by)\s+(?:the|that)\s+(?:time|point)\b", re.I),
     re.compile(r"\bat\s+(?:the\s+age\s+of\s+)?" + _AGE_NUM + r"\s+when\b", re.I),
     re.compile(r"\bwho\s+at\s+" + _AGE_NUM, re.I),
     re.compile(r"\bat\s+which\s+point\s+(?:he|she|they)\s+was\s+" + _AGE_NUM, re.I),
     re.compile(_AGE_NUM + r"\s+years?\s+of\s+age\b", re.I),
     re.compile(r"\bat\s+age\s+" + _AGE_NUM, re.I),
-    re.compile(r"\breached\s+" + _AGE_NUM, re.I),
+    # "Tomasz Drozd was 27." / "..., when the subject was 48." - a named subject (or a
+    # pronoun) and the number closing the clause.  "The network was 12 strong" does not
+    # qualify: the number does not close the clause and the subject is not a name.
+    re.compile(r"(?:\b[A-Z][a-z'\-]+|\b(?:he|she|they|subject|individual))\s+was\s+" + _AGE_NUM
+               + r"\s*(?:[.;]|$)"),
+    # "Mark E Phillips, at 24, was taken into custody ..."
+    re.compile(r",\s*at\s+" + _AGE_NUM + r"\s*,", re.I),
     re.compile(r",\s*(?:a\s+)?" + _AGE_NUM + r"\s*,", re.I),
 ]
 
@@ -164,6 +180,11 @@ def birth_dates_from_notes(profile_notes):
     paragraph = first_paragraph(profile_notes)
     if not paragraph:
         return []
+    labelled = _DOB_LABEL.search(paragraph)
+    if labelled:
+        parsed = _labelled_date(labelled.group(1))
+        if parsed is not None:
+            return [parsed]
     born = _BORN_ON.search(paragraph)
     if born:
         parsed = dates.parse(born.group(1))
@@ -191,6 +212,21 @@ def _ask_about_birth(extractor, hit):
     except Exception:
         return []
     return list(found.dates) if found else []
+
+
+def _labelled_date(text):
+    """A labelled date of birth.  Watchlist profiles write slash dates either way round
+    ("6/20/1955"), so the order is trusted only when one number cannot be a month;
+    otherwise only the year is kept, which can agree but never contradict a month."""
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", text.strip())
+    if not m:
+        return dates.parse(text)
+    a, b, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if a > 12 and b <= 12:
+        return dates.parse("%04d-%02d-%02d" % (year, b, a))
+    if b > 12 and a <= 12:
+        return dates.parse("%04d-%02d-%02d" % (year, a, b))
+    return dates.Date(year)
 
 
 def states_a_birth(profile_notes):
@@ -276,8 +312,8 @@ class HitFacts(object):
         values = self.dob_values()
         if not values:
             return ""
-        if self.dob_origin == FROM_FIELD:
-            return _join([v.iso() for v in values])
+        if self.dob_origin in (FROM_FIELD, FROM_FIELD_AND_NOTES):
+            return _join([v.iso() if v.month else str(v.year) for v in values])
         return _join([str(y) for y in sorted({v.year for v in values})])
 
     def dob_description(self):
@@ -289,6 +325,12 @@ class HitFacts(object):
             return "listed date of birth is %s" % values[0].iso()
         if self.dob_origin == FROM_FIELD:
             return "listed dates of birth are %s" % _join([v.iso() for v in values])
+        if self.dob_origin == FROM_FIELD_AND_NOTES:
+            return "listed and profile-note dates of birth are %s" % _join(
+                [v.iso() if v.month else str(v.year) for v in values])
+        if any(v.month for v in values):
+            where = "profile notes" if self.dob_origin == FROM_NOTES else "search results"
+            return "%s give %s" % (where, _join([v.iso() for v in values]))
         years = sorted({v.year for v in values})
         where = "profile notes" if self.dob_origin == FROM_NOTES else "search results"
         if len(years) == 1:
@@ -327,6 +369,14 @@ def gather(data, hit, variants=None, extractor=None):
     if field_dates:
         dobs = [Fact(d) for d in field_dates]
         origin = FROM_FIELD
+        if not is_company:
+            # "Every birth date the hit gives": a birth stated in the first paragraph is
+            # one the hit gives too, and one agreeing date is enough to block a clear.
+            extra = [d for d in birth_dates_from_notes(hit.get("profile_notes", ""))
+                     if d not in field_dates]
+            if extra:
+                dobs += [Fact(d) for d in extra]
+                origin = FROM_FIELD_AND_NOTES
     elif not is_company:
         # "For companies, only the `dobs` field is an incorporation date."
         from_notes = birth_dates_from_notes(hit.get("profile_notes", ""))
