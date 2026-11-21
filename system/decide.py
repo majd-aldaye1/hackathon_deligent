@@ -51,10 +51,13 @@ class Decision(object):
 class Engine(object):
     """Holds the indexes and the per-alert work so repeated hits cost nothing twice."""
 
-    def __init__(self, data, persons_index, variants=None):
+    def __init__(self, data, persons_index, variants=None, extractor=None):
         self.data = data
         self.persons = persons_index
         self.variants = variants
+        # The optional language-model fallback (step 10).  None means regex only, which is
+        # how the system runs with no key, with --no-llm, or when the API fails.
+        self.extractor = extractor
         self._screened = {}
         self._resolution = {}
         self._sheets = {}
@@ -164,7 +167,7 @@ class Engine(object):
         return [self.decide(hit) for hit in self.data.hits]
 
 
-def build(data, variants=None):
+def build(data, variants=None, extractor=None):
     from . import persons
 
-    return Engine(data, persons.Persons(data), variants)
+    return Engine(data, persons.Persons(data), variants, extractor)

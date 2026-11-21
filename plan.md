@@ -590,16 +590,33 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
     easily got backwards: exactly-16 does **not** clear, one year out is **not** a contradiction,
     and the location exception does **not** save a hit that is also deceased or name-mismatched.
 
-### Step 8 — `system/run`, end-to-end, first score
+### Step 8 — `system/run`, end to end, first score — **[x] done**
 - **Goal.** Executable entry point, one JSON line per hit, in hit order; `output/dev.jsonl`.
-- **Files.** `system/run` (executable, `#!/usr/bin/env python3`), `system/cli.py`, `tools/score.py`
-- **Notes.** `system/run <data_folder> <output_file>`, reads only that folder, stdlib only.
-  `--no-llm` flag; per-hit `try/except` → `REVIEW`/`INSUFFICIENT_DATA` with an honest reason (§9).
-  `tools/score.py <pred> --labels dev/practice_labels.jsonl` implements the format check and the cost
-  matrix, and reports **unsafe clears** (`DIFFERENT_ENTITY` where the truth is not) by name.
-- **Acceptance.** 819 lines, format check passes, every `reason_code` belongs to its decision, every
-  evidence id exists in the data; practice cost recorded; **unsafe clears = 0**; runtime < 2 min.
-- **Risks.** `output/dev.jsonl` must always be regenerated, never edited.
+- **Files.** `system/run` (executable), `system/cli.py`, `tools/score.py`, `tests/test_cli.py`,
+  `output/dev.jsonl`
+- **Notes.** `system/run <data_folder> <output_file> [--no-llm] [--quiet]`. The entry point adds the
+  repository root to `sys.path` itself, so it works from any working directory. `--no-llm` and the
+  key check both resolve through `cli.build_extractor`, which returns `None` for **every** way of
+  not having a model — no key, `--no-llm`, no module, a client that will not start — because the
+  brief requires the system to run regex-only "if the key is missing or the API fails".
+- **Acceptance — met.**
+  - `./system/run dev output/dev.jsonl` → **819 lines in 7.7 s**, exit 0, nothing on stderr.
+  - Format check **clean**; practice cost **0**; **unsafe clears 0**; `reason_code` 50/50;
+    `customer_record_id` 50/50; `evidence` exact 50/50.
+  - **460 tests pass.** The suite drives the real executable through `subprocess` from a different
+    working directory with no key in the environment, and asserts its 819 lines equal the committed
+    `output/dev.jsonl` byte for byte.
+  - **Stdlib only, proved by parsing the AST** of every file in `system/`: the only imports outside
+    the package are `argparse, collections, json, os, re, sys, time, traceback, unicodedata`, and
+    every one is in `sys.stdlib_module_names`.
+- **Findings.**
+  - **A real bug the tests caught:** with `OPENROUTER_API_KEY` set, the first version imported
+    `system.llm`, which does not exist until step 10 — so a grader with a key in their environment
+    would have got a crash instead of a run. Now every failure path returns `None`, and
+    `OPENROUTER_API_KEY=… ./system/run`, `--no-llm`, and a bare run produce **byte-identical**
+    output.
+  - Verified by hand as well: runs from another working directory with absolute paths, creates a
+    missing output directory, and exits **2** with a one-line message (no traceback) on a bad folder.
 
 ### Step 9 — Error analysis on the practice labels
 - **Goal.** Drive practice cost down by implementing principles more faithfully, never by special-casing.
