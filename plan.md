@@ -260,7 +260,7 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 | D8 | **Q5** `customer_record_id` | first / lowest / AMBIGUOUS rules | **one person → the lowest record_id of that person** (any is accepted); **>1 person → `"AMBIGUOUS"`**; **none → `null`** | labels accept any of a person's records (`CUS-775419; CUS-138588`); both multi-person labels use `"AMBIGUOUS"` | 2026-11-21 |
 | D9 | **Q5** evidence rule | everything looked at / only deciding facts | **union of `source_ids` of the facts the firing codes used**; for an agreeing country only the matching sources; hit ids never cited | `H-2808BE` → `KYC-20EE17` alone; `H-FF3096` → `NOTE-10AEAB` alone (see §3.7.3–4) | 2026-11-21 |
 | D10 | **Q5** multi-person same answer | `AMBIGUOUS_CUSTOMER_RECORD` / the shared decision | **the shared decision + its own code**, `customer_record_id="AMBIGUOUS"`; `AMBIGUOUS_CUSTOMER_RECORD` only when the people disagree | `H-6C7985`, `H-CDEC83` → `REVIEW`/`INSUFFICIENT_DATA` with `AMBIGUOUS`; POLICY principle 3 | 2026-11-21 |
-| D11 | **Q6** search `query` key | several normalisations | **accents+punctuation stripped, lowercased, single-letter tokens dropped, duplicates kept, sorted, space-joined** | 702/702 individual hits map to a real query; 28 need single-letter dropping, 6 break under de-duplication | 2026-11-21 |
+| D11 | **Q6** search `query` key | several normalisations | **combining marks stripped, every other non-ASCII letter dropped (not transliterated), lowercased, single-letter tokens dropped, duplicates kept, sorted, space-joined**; the transliterated spelling is looked up as well | 702/702 individual hits map to a real query; 28 need single-letter dropping, 6 break under de-duplication, and 4 (`"Drozd, Tomasz Paweł"` → `drozd pawe tomasz`) break under transliteration | 2026-11-21 |
 | D12 | **Q6** date formats | ISO only / full set | **7 parsers**: `YYYY-MM-DD`, `DD/MM/YYYY` (day-first), `D Month YYYY`, `Month D, YYYY`, `Month YYYY`, `YYYY-MM`, `YYYY` | 0/126 753 unparsed; `A-C21BD3` needs `Month YYYY` | 2026-11-21 |
 | D13 | **Q6** placeholders | guess a list / take from data | `na`, `n/a`, `n.a.`, `test`, `unknown`, `xxx`(+runs of x), `none`, `nil`, `tbd`, `dummy`, `sample`, `placeholder`, `not provided`, and any all-digit token | observed: `N/a`, `0000`, `Xxx`, `Test`, `NA`, `Unknown`; POLICY says "digits and the like" | 2026-11-21 |
 | D14 | Reason-code order | arbitrary / fixed | **fixed**: `ENTITY_TYPE_MISMATCH` → `DECEASED` → `TEMPORAL_IMPOSSIBILITY` → `DOB_MISMATCH` → `LOCATION_MISMATCH` → `NAME_MISMATCH_VERIFIED`, then `NAME_DOB_LOCATION_MATCH` → `NAME_DOB_MATCH` → `NAME_LOCATION_MATCH`, then `AMBIGUOUS_CUSTOMER_RECORD` → `INSUFFICIENT_DATA` | "any of them is accepted", but reproducibility is 10 % of the score; the label order matches the middle four | 2026-11-21 |
@@ -310,7 +310,7 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
   - The audit script keeps its own small date/query helpers because it is a diagnostic; step 2 adds a
     test asserting the real parsers in `system/` agree with it.
 
-### Step 2 — Normalisation utilities (text, names, countries, partial dates)
+### Step 2 — Normalisation utilities (text, names, countries, partial dates) — **[x] done**
 - **Goal.** Principle 8 implemented exactly, plus country keys and partial-aware dates.
 - **Files.** `system/norm.py` (accents, brackets, punctuation, placeholders), `system/names.py`,
   `system/countries.py`, `system/dates.py`, `system/name_variants.py` (the 55 groups + 30 legal forms
@@ -324,12 +324,49 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
   Dates: `(year, month|None, day|None)`, `year` may be a set of candidates; equality compares only
   parts both sides give. Countries: table (D15) + identity fallback; a helper takes the last
   comma-part after stripping `[tag]` suffixes.
-- **Acceptance.** `tests/test_names.py` with a case for **every clause** of principle 8, including the
-  practice-label pairs (`john`/`jonathan` → no, `Md. Saidul Islam`/`MD. SAEDUL ISLAM` → yes,
-  `Mohammad Nadeem Ghani`/`Muhammad Nadeem GHANI` → yes, `Abdulsalam`/`Abdul Salam` → yes,
-  `CHINEDU AZEEZ`/`Ridwan, Azeez` → no, `Pescanova, Sociedad Anónima`/`Pescanova, Inc` → yes as
-  companies), `tests/test_dates.py` (all 7 formats; 0 unparsed over the whole dev set),
-  `tests/test_countries.py` (`GB`=`United Kingdom`=`British`; `Macao …` ≠ `China`; `International`/`Europe` → none).
+- **Acceptance — met.** `python3 -m unittest discover -s tests` → **151 tests pass** (18 from step 1,
+  133 new), in 20 s.
+  - `tests/test_names.py` (48): a case per clause of principle 8, each quoting the sentence it tests —
+    parts (case/accents/punctuation/brackets/initials/distinct-once/placeholders/legal forms),
+    part matching (identical, variant group, <4 identical only, 4–6 one edit, ≥7 two edits, shorter part
+    decides, a swap is two edits), joined-or-apart (`Abdulsalam` ≡ `Abdul Salam`, counting once, never
+    reused), agreement (≥2 parts, or every part of the shorter name), aliases and nicknames, the
+    `<2 real parts` guard, blocking tokens, the query key, and the four `name_variants.json` shapes.
+    All ten practice-label name pairs decide correctly, including `john`/`jonathan` → **no**.
+  - `tests/test_dates.py` (33): the seven formats, day-first slashes, abbreviated months, non-dates,
+    `equal in every part both give`, agreement, contradiction (incl. "exactly one year out is **not** a
+    contradiction" and "every hit date must be contradicted"), partial-aware `before`, and
+    `max_age_at(2007, 2020-01-08) == 13`.
+  - `tests/test_countries.py` (25): ten code/name/demonym groups collapse to one key; territories stay
+    separate (Macao≠China, Hong Kong≠China, Puerto Rico≠US, Jersey≠UK, N. Mariana≠US); regions and
+    placeholders are not countries; unknown strings equal only themselves; address/place-of-birth tails;
+    free-text scanning incl. "a multi-word country is not split" and "two-letter codes are not looked
+    for in prose".
+  - `tests/test_folder_normalisation.py` (11): over the **whole folder** — all 127 193 date strings
+    parse, every hit `dobs` and `deceased_date` parses, every bank-side and hit-side country string maps
+    to a known country (**0 unmapped either side**), `International`/`Europe` are dropped and really
+    occur, **702/702** individual hits map to an existing search query, **0/117** company hits have any,
+    no non-kyc note names two countries and exactly 3 067 name one.
+- **Findings.**
+  - **D11 refined — the search `query` is built with a plain ASCII filter, not a transliteration.**
+    `"Drozd, Tomasz Paweł"` is filed as `drozd pawe tomasz`: the stroked *l* is simply **dropped**. So
+    `names.query_key` strips combining marks and then discards every non-ASCII letter, while name
+    *comparison* transliterates (`Paweł` → `pawel`) — two different normalisations on purpose.
+    `names.query_keys` returns both spellings and the gatherer looks up both, which costs nothing and
+    cannot invent a match, since a result must still carry the listing phrase and a hit country.
+  - `norm.strip_accents` needs a transliteration table: NFKD cannot decompose `ł ø ß æ đ ı þ`, so
+    without it `Paweł` loses a letter instead of becoming `Pawel`.
+  - Two bugs the country tests caught: multi-word aliases were being indexed word by word, so
+    `"lived in the United Kingdom"` reported **United States** via a stray `united` key — 94 notes were
+    affected; and Sweden's `SE` was suppressed as a company legal form, leaving 10 customer records with
+    no country. Codes are now indexed only from the code field and aliases only as whole strings; only
+    `NA` stays excluded, because it is a missing-value placeholder far more often than Namibia.
+  - **257** individual records cannot be decided on name: the placeholder ones (`"Paweł N/a N/a"`,
+    `"Sani 0000 0000"`, `"Martin Xxx Xxx"`) and the repeated-word ones (`"Lawal Lawal"`, `"Musa Musa"`,
+    `"Abubakar ABUBAKAR"`), which have one part because "each distinct part counts once".
+  - Name matching is an exhaustive best-matching over parts (memoised bitmask search, capped at 12
+    parts), not a greedy pass, so "at least two parts match" means what it says and no part is counted
+    twice.
 - **Risks.** Over-generous edit distance manufactures name agreement and blocks a legitimate clear
   (cheap) or manufactures a `SAME` (cheap). Under-generous blocks a `NAME_MISMATCH_VERIFIED` clear.
   Both are low-cost; keep the literal reading.
