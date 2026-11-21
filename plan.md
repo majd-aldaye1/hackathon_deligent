@@ -119,10 +119,12 @@ rewrite — say the word and I will do it, I have not touched history unasked.
   Territories appear and must stay distinct: `Northern Mariana Islands`, `Macao Special Administrative
   Region of China`, `Puerto Rico`, `Jersey`, `British Virgin Islands`, `Kosovo`.
 - `primary_category` blank on 345/819 → fall back to the first of `categories`.
-- **Dated reports:** 275 hits contain `"According to"`, but only **214** contain a line of the strict
-  form `According to …; <Month D, YYYY>: …` (807 such lines in total). Excluded by the strict form, as
-  POLICY requires: `"According to … FIA … ; June 2014: …"` (month-year only) and
-  `"According to United States -The System for Award Management (SAM):"` (no date).
+- **Dated reports:** 273 hits contain `"According to"` and 807 lines begin with it, but only **215
+  hits / 640 lines** match the strict form `According to …; <Month D, YYYY>: …`. Excluded by the
+  strict form, as POLICY requires: `"According to … FIA …; June 2014: …"` (month-year only),
+  `"According to United States -The System for Award Management (SAM):"` (no date), and **13 lines
+  across 11 hits that put a `;` where the form has a `:`** (`"…; October 10, 2024; On October 10 …"`)
+  — 5 of those hits have no other dated report (see D22).
 - **DOB clue in the first paragraph:** 393 hits have notes but no `dobs`; of those, **68** have a
   first paragraph that is one short line. Two families:
   - explicit — `"Yahaya Abubakar Abdullahi was born in 1952."`, `"… was born on 17 July 1939."`
@@ -269,6 +271,8 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 | D19 | KYC note vs provider check | note only as fallback / merge both | **merge both, use the most recent approved** | POLICY principle 4 ("whether … by the KYC provider or only in a note"); in dev the two never co-occur, so either reading scores the same, and merging is the faithful one | 2026-11-21 |
 | D20 | LLM scope | also name/anchoring/decisions | **only** (a) hit first-paragraph DOB clues, (b) customer-note places lived and note-recorded KYC results; grounded by verbatim quote; `--no-llm` and auto-fallback | brief §5; regex already covers search results 100 % and places-lived 100 % on dev | 2026-11-21 |
 | D21 | Entity type comparison | alert type vs hit / customer type vs hit | **resolved customer's `entity_type` vs hit's**; with no customer, no type rule | POLICY principle 6 "one is a person and the other a company" is about the customer; the single dev case (`A-41F2A9`) resolves to a Company customer vs an Individual hit either way | 2026-11-21 |
+| D22 | Dated-report punctuation | accept `;` after the date / require `:` | **require `:`** — exactly the form POLICY gives | POLICY: "exactly the English lines … of the form"; 13 lines across 11 hits use `;`. Dropping a report can only move the *earliest* report later, which makes the customer older and a `TEMPORAL_IMPOSSIBILITY` clear less likely — the safe direction against the 60-cost error | 2026-11-21 |
+| D23 | Branch | `main` / `dev` | **`dev`** — all work and commits land there | `origin/main` holds a separate complete submission (`4c8e5cd`, `442a9f9`); the user chose to keep this build on `dev` and leave `main` untouched | 2026-11-21 |
 
 ---
 
@@ -276,18 +280,35 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 
 Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance test green and a commit.
 
-### Step 1 — Repo skeleton, loader, indexes, audit script
+### Step 1 — Repo skeleton, loader, indexes, audit script — **[x] done**
 - **Goal.** `system/` package that loads a data folder into typed records with O(1) indexes, plus a
   `tools/audit.py` that reprints §3's counts so a format change is caught immediately. `tools/csv_to_jsonl.py`
   builds `dev/` from the CSV export.
-- **Files.** `system/loader.py`, `system/model.py`, `tools/csv_to_jsonl.py`, `tools/audit.py`, `.gitignore` ✔
+- **Files.** `system/model.py`, `system/loader.py`, `tools/csv_to_jsonl.py`, `tools/audit.py`,
+  `tests/test_loader.py`, `.gitignore` — all written.
 - **Notes.** Sniff files by field names (D2); normalise every multi-valued field to a list (D3); build
   indexes: accounts by `account_id`, by `login_handle`, by `customer_id`; customers by `record_id`,
   by `email`; onboarding by `(account_id, customer_id)` **and** by `customer_id`; kyc by `applicant_id`;
   notes by `requester_email`; search results by `query`; hits by `alert_id`. Blocking index: name part → record indices.
-- **Acceptance.** `tools/audit.py dev/` reproduces every count in §3.1–3.6; loader round-trips the CSV
-  export and a hand-written list-valued JSONL fixture; whole load < 10 s.
-- **Risks.** Real JSONL field names differ → mitigated by D2/D3 and by the audit script failing loudly.
+- **Acceptance — met.** `tools/audit.py` reproduces every count in §3.1–3.6 and prints **identical
+  output for `dataset/` (CSV) and `dev/` (JSONL)**. `python3 -m unittest discover -s tests` → **18 tests
+  pass**, including: all nine tables identified from files named `table_01.jsonl` … `table_09.jsonl`;
+  accounts not confused with onboarding; list fields preserved; `relationships`' internal `;` preserved;
+  `null` → `""`; numbers → strings; label field aliases (`reason_code` → `reason_codes`); every record of
+  every table equal field-for-field between CSV and JSONL; no dangling link in 440 alerts; 55 name-variant
+  groups and 30 legal forms recovered. Load of the whole folder: **2.2 s** (budget 10 s).
+- **Findings.**
+  - All nine tables identified by field signature; `onboarding` must be tested before `accounts`,
+    because `{account_id, customer_id}` is a subset of onboarding's required fields.
+  - `tools/csv_to_jsonl.py dataset dev` writes the nine `.jsonl` files plus `POLICY.md` and
+    `name_variants.json` (reconstructed from the Policy tab as
+    `{"given_name_groups": [[…]], "company_legal_forms": […]}`; the step-2 reader accepts other shapes).
+  - **0 of 127 193** date strings in the folder fall outside the seven formats of D12.
+  - The blocking index is built on demand via `Dataset.name_index(tokenize)`, so the tokeniser stays in
+    `system/names.py` (step 2) and the loader holds no name logic — a deliberate change from the original
+    step-1 wording, which put the index in the loader.
+  - The audit script keeps its own small date/query helpers because it is a diagnostic; step 2 adds a
+    test asserting the real parsers in `system/` agree with it.
 
 ### Step 2 — Normalisation utilities (text, names, countries, partial dates)
 - **Goal.** Principle 8 implemented exactly, plus country keys and partial-aware dates.

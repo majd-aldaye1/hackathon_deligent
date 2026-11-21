@@ -1,0 +1,24 @@
+# Never commit the data room or any credentials
+dev/
+data/
+dataset/
+*.jsonl.gz
+.env
+.env.*
+!.env.example
+
+# Caches / artefacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.llm_cache/
+*.log
+.DS_Store
+.venv/
+venv/
+
+# Allow the system's own output
+!output/*.jsonl
