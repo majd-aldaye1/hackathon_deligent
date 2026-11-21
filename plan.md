@@ -383,15 +383,33 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
   (cheap) or manufactures a `SAME` (cheap). Under-generous blocks a `NAME_MISMATCH_VERIFIED` clear.
   Both are low-cost; keep the literal reading.
 
-### Step 3 — Customer resolver: linked alerts
+### Step 3 — Customer resolver: linked alerts — **[x] done**
 - **Goal.** `account_ref` / `login_handle` / `email` → candidate customer records, with the screened
   details picking between joint holders.
-- **Files.** `system/resolve.py`
+- **Files.** `system/resolve.py`, `tests/test_resolve_linked.py`
 - **Notes.** `account_ref` → `Accounts.account_id` → all `customer_id`s (**52 accounts have two**);
-  if > 1, apply the screened-detail fit test (same predicate as step 4) to choose; if several still
-  fit, keep them all → ambiguity. `login_handle` → accounts; `email` → customers.
-- **Acceptance.** All 38 linked practice labels resolve to a record set containing the expected ids.
-- **Risks.** Choosing a joint holder on name alone when both share a surname → keep DOB/country in the fit test.
+  if > 1, apply the screened-detail fit test to choose; if several still fit, keep them all →
+  ambiguity. `login_handle` → accounts; `email` → customers. The fit test is shared with step 4:
+  each criterion is `True`, `False`, or **`None` when the alert did not screen on it**, so a detail
+  the alert is silent about can neither support nor rule out a record. A link leading to exactly one
+  record is **taken as it stands** — POLICY only uses the screened details "to pick between" several.
+- **Acceptance — met.** **190 tests pass** (35 new). On the real folder: link kinds are
+  170/70/54/146; every link resolves to ≥ 1 record; **58 alerts lead to two records and all 58 are
+  `account_ref`**; the screened details separate **every one** of those 58 to exactly one record;
+  every linked alert resolves to exactly one record; **all 38 linked practice labels** resolve to an
+  accepted `customer_record_id`; resolution is identical across two runs.
+- **Findings.**
+  - All 58 joint-holder alerts separate on **name and date of birth together** — in every case the
+    other holder is a family member with a different given name and a different DOB (`"Abdullahi
+    Abubakar Sadiq"` vs `"Hannah Sadiq"`, `"Timothy Pangelinan Villagomez"` vs `"Emily Villagomez"`).
+    The name alone separates all 58 as well, so no joint-holder choice rests on one criterion.
+  - **No linked alert is ambiguous**, so `AMBIGUOUS_CUSTOMER_RECORD` can only arise from the
+    unlinked search (step 4) or from person merging.
+  - `Alerts.city` is only ever populated on **unlinked** alerts, so the city criterion does no work
+    in this step — but it is built and tested here because the fit test is shared.
+  - The city field needed splitting on `,` and `/` into alternatives (`"Cherry Hill, NJ / Wilmington,
+    DE"`), with pieces under three letters dropped so a state code cannot match inside an unrelated
+    word, and accent folding so screened `"München"` matches the record's `"München"`.
 
 ### Step 4 — Customer resolver: unlinked alerts, person merge, ambiguity
 - **Goal.** The 146 unlinked alerts, plus union-find person merging, plus the ambiguity verdict.
