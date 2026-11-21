@@ -29,35 +29,45 @@ Search ──┴─► fields, profile notes,  ─► (names/aliases, type, ─�
 
 ---
 
-## 2. BLOCKER TO CONFIRM — the real data room is not on this machine
+## 2. The data room
 
-`/Users/hh/UCL/Hackathon/hackathon_deligent/dataset/` is the **read-only CSV browse export** of the
-workbook (`Start here.csv` says so). The brief's actual artefacts are **absent**:
+`dev/` holds the real development set: one JSON Lines file per table, plus `POLICY.md` and
+`name_variants.json`. It is **gitignored and never committed** — the brief forbids it, and the
+earlier CSV browse export has been deleted from the working tree and untracked (it is still in
+history at `2a4c291`, which only a history rewrite would remove; say the word).
 
-| Expected | Status |
+The system reads this folder and nothing else. `system/run <data_folder> <output_file>`.
+
+### 2.1 What the real format turned out to be
+
+Verified against `dev/` directly. Two shapes differ from the workbook export and would have broken
+a loader written to the CSV column names:
+
+| | Real JSON Lines |
 |---|---|
-| `dev/*.jsonl` (source of truth, same format as the unseen set) | **missing** — only CSV tabs |
-| `POLICY.md` | recovered in full from the `Policy` tab (text is complete) |
-| `name_variants.json` | recovered from the `Policy` tab (55 groups + 30 legal forms) |
-| `validate.py` (+ `--score dev/practice_labels.jsonl`) | **missing** |
+| **Alerts** | The screened details are **nested**: `{"alert_id", "screened_at", "customer": {"name", "entity_type", "dob", "country", "city"}, "account_ref", "login_handle", "email", "hit_ids": [...]}`. There is **no** `customer_name`, `entity_type`, `dob`, `country`, `city` at the top level and **no** `hit_count`. The loader flattens `customer` into those five fields. |
+| **Hits** | `details` is an **object** keyed by listing kind (`{"pep": "..."}`), `relationships` is a list, `match_score` is a number, and there are five fields the export did not show: `first_name` (357), `middle_name` (95), `last_name` (357), `best_matching_name` (474) and `subcategories`. |
+| **Practice labels** | `reason_codes`, `customer_record_ids`, `evidence` and **`path`** are all lists. |
+| **Everywhere** | Absent values are `null`, not `""`. |
 
-Consequences and how the plan handles it:
+`name_variants.json` is `{"description": str, "groups": [[...]] (55), "company_legal_forms": [...] (30)}`.
 
-1. `system/run <data_folder> <output_file>` will read **JSONL** per the brief. `tools/csv_to_jsonl.py`
-   builds a local `dev/` folder from the CSV export so we can develop and score. `dev/` is gitignored.
-2. The loader **identifies each file by its field names, not its filename**, and accepts each
-   multi-valued field as either a JSON list or a `"; "`-joined string. So whatever the real `dev/`
-   calls its files and however it encodes `aliases`/`dobs`/`countries`, the system reads it.
-3. `tools/score.py` re-implements the format check and the published cost matrix so we can score the
-   50 practice labels locally. The real `validate.py` stays authoritative if you can get it.
+**`POLICY.md` is substantively identical** to the text recovered from the Policy tab — same nine
+principles, same reason-code table, word for word. Nothing in sections 3–5 below needed revising,
+and **every count in section 3 reproduces exactly on the real folder**, including the dated-report
+counts, so the workbook's 32 000-character truncation never bit.
 
-**Please send the real `dev/` folder and `validate.py` if you have them** — it removes the one
-assumption I cannot verify (the exact JSONL field encoding).
+There is **no `validate.py`** in the data room, so `tools/score.py` (step 8) implements the format
+check and the published cost matrix.
 
-**Also:** `dataset/` (the whole development set) is already committed in git history
-(`2a4c291 added dataset`). `.gitignore` now excludes `dataset/`, `dev/`, `data/`, `.env` and caches,
-but the committed copy is still in history. Removing it needs `git rm --cached` plus a history
-rewrite — say the word and I will do it, I have not touched history unasked.
+### 2.2 How the loader protects against the unseen set
+
+- Each file is identified by **its filename, then by the fields its records carry**, so a renamed
+  file is not a total failure.
+- Every multi-valued field is accepted as a JSON list **or** a `"; "`-joined string; every scalar
+  as a string, number, `null` or nested object.
+- `tools/audit.py` re-derives every count in section 3, so a format change shows up as a changed
+  number rather than as a silently wrong decision.
 
 ---
 
@@ -67,8 +77,8 @@ rewrite — say the word and I will do it, I have not touched history unasked.
 
 | Table | Rows | Key fields |
 |---|---|---|
-| Alerts | 440 | `alert_id, screened_at, customer_name, entity_type, dob, country, city, account_ref, login_handle, email, hit_count, hit_ids` |
-| Hits | 819 | `hit_id, alert_id, match_score, entity_type, name, aliases, gender, dobs, place_of_birth, life_status, deceased_date, nationality, citizenship, countries, addresses, identifiers, categories, primary_category, position_or_allegation, details, relationships, profile_notes, sources, source_urls` |
+| Alerts | 440 | `alert_id, screened_at, customer{name, entity_type, dob, country, city}, account_ref, login_handle, email, hit_ids` |
+| Hits | 819 | `hit_id, alert_id, match_score, entity_type, name, first_name, middle_name, last_name, best_matching_name, aliases, gender, dobs, place_of_birth, life_status, deceased_date, nationality, citizenship, countries, addresses, identifiers, categories, subcategories, primary_category, position_or_allegation, details, relationships, profile_notes, sources, source_urls` |
 | Customers | 72 265 | `record_id, entity_type, full_name, preferred_name, login_name, dob, nationality, residence_country, city, address, email, phone, occupation, employer, registration_number, onboarded_at, status, last_kyc_refresh` |
 | Accounts | 86 659 | `account_id, customer_id, login_handle, phone, opened_at, status` |
 | Onboarding | 72 265 | `account_id, customer_id, kyc_applicant_id, onboarded_at` |
@@ -250,9 +260,9 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 
 | # | Decision | Options | Chosen | Evidence | Date |
 |---|---|---|---|---|---|
-| D1 | Input format | read CSV export / read JSONL per brief | **JSONL**, with a CSV→JSONL bridge for local dev | brief + `Start here.csv` ("your system should read the JSON Lines files in dev/") | 2026-11-21 |
-| D2 | File discovery | fixed filenames / sniff by field names | **sniff by field names**, filename as a hint only | real `dev/` filenames unknown; costs nothing, removes a total-failure mode | 2026-11-21 |
-| D3 | Multi-valued fields | assume list / assume `"; "` string | **accept either** (list → use; str → split on `;` and strip) | CSV export joins with `"; "`; JSONL probably uses lists | 2026-11-21 |
+| D1 | Input format | — | **JSON Lines from the given folder** | the data room ships `dev/*.jsonl`; confirmed against the real folder | 2026-11-21 |
+| D2 | File discovery | fixed filenames / sniff by field names | **filename first, then field signature** | the real filenames are `alerts.jsonl` … `practice_labels.jsonl`; the signature fallback costs ~20 lines and removes a total-failure mode if the unseen set renames a file | 2026-11-21 |
+| D3 | Field shapes | assume one encoding / accept several | **accept several**: multi-valued fields as a list or a `"; "` string; scalars as string, number, `null` or nested object; the alert's `customer` object flattened | the real folder uses lists, `null` and a nested `customer`; accepting more costs nothing | 2026-11-21 |
 | D4 | **Q1** screening date | `Alerts.screened_at` / note dates / today | **`Alerts.screened_at`** | only date on the alert; 2026-10..11 values; `DECEASED` needs "before the customer was screened" | 2026-11-21 |
 | D5 | **Q2** "expired" check | `result` value / an expiry date / vs screening date | **`result` field**: use `result == "approved"`; `rejected`/`expired` are not evidence | `result` ∈ {approved, rejected, expired}; there is no expiry-date column | 2026-11-21 |
 | D6 | **Q3** no customer found | screened details may clear / only locate | **only locate** — never clear; `customer_record_id = null`, `REVIEW`/`INSUFFICIENT_DATA` | POLICY principle 2 frames screened details as the *search key*; principle 9 says `null` if none found; clearing on the screened name alone would risk the 60-cost error | 2026-11-21 |
@@ -281,34 +291,36 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance test green and a commit.
 
 ### Step 1 — Repo skeleton, loader, indexes, audit script — **[x] done**
-- **Goal.** `system/` package that loads a data folder into typed records with O(1) indexes, plus a
-  `tools/audit.py` that reprints §3's counts so a format change is caught immediately. `tools/csv_to_jsonl.py`
-  builds `dev/` from the CSV export.
-- **Files.** `system/model.py`, `system/loader.py`, `tools/csv_to_jsonl.py`, `tools/audit.py`,
-  `tests/test_loader.py`, `.gitignore` — all written.
-- **Notes.** Sniff files by field names (D2); normalise every multi-valued field to a list (D3); build
-  indexes: accounts by `account_id`, by `login_handle`, by `customer_id`; customers by `record_id`,
-  by `email`; onboarding by `(account_id, customer_id)` **and** by `customer_id`; kyc by `applicant_id`;
-  notes by `requester_email`; search results by `query`; hits by `alert_id`. Blocking index: name part → record indices.
-- **Acceptance — met.** `tools/audit.py` reproduces every count in §3.1–3.6 and prints **identical
-  output for `dataset/` (CSV) and `dev/` (JSONL)**. `python3 -m unittest discover -s tests` → **18 tests
-  pass**, including: all nine tables identified from files named `table_01.jsonl` … `table_09.jsonl`;
-  accounts not confused with onboarding; list fields preserved; `relationships`' internal `;` preserved;
-  `null` → `""`; numbers → strings; label field aliases (`reason_code` → `reason_codes`); every record of
-  every table equal field-for-field between CSV and JSONL; no dangling link in 440 alerts; 55 name-variant
-  groups and 30 legal forms recovered. Load of the whole folder: **2.2 s** (budget 10 s).
+- **Goal.** A `system/` package that loads the data folder into typed records with O(1) indexes,
+  plus a `tools/audit.py` that reprints section 3's counts so a format change is caught immediately.
+- **Files.** `system/model.py`, `system/loader.py`, `tools/audit.py`, `tests/test_loader.py`, `.gitignore`.
+- **Notes.** Identify files by name then by field signature (D2); normalise every multi-valued field
+  to a list of strings and every scalar to a string (D3); flatten the alert's nested `customer`
+  object. Indexes: accounts by `account_id`, `login_handle`, `customer_id`; customers by `record_id`,
+  `email`; onboarding by `(account_id, customer_id)` **and** by `customer_id`; kyc by `applicant_id`;
+  notes by `requester_email`; search results by `query`; hits by `alert_id`. The blocking index is
+  built on demand through `Dataset.name_index(tokenize)`, so the loader holds no name logic.
+- **Acceptance — met.** `tools/audit.py dev` reproduces every count in sections 3.1–3.6.
+  `python3 -m unittest discover -s tests` → **155 tests pass**, of which 22 cover the loader:
+  all nine tables identified from files named `table_01.jsonl` … `table_09.jsonl`; accounts not
+  confused with onboarding; the nested `customer` object flattened (including `null` → `""`);
+  list fields preserved; a `details` object rendered as readable text that keeps its keys; numbers
+  stringified; label aliases (`reason_code` → `reason_codes`) and the list-valued `path`; a JSON
+  array file read as well as JSON Lines; and on the real folder — exact row counts, one file per
+  table, screened details present on all 440 alerts, every alert carrying at most one link, no
+  dangling link, `hit_ids` covering all 819 hits exactly once, and every label pointing at a real
+  hit and alert. Whole-folder load: **2.1 s** (budget 10 s).
 - **Findings.**
-  - All nine tables identified by field signature; `onboarding` must be tested before `accounts`,
-    because `{account_id, customer_id}` is a subset of onboarding's required fields.
-  - `tools/csv_to_jsonl.py dataset dev` writes the nine `.jsonl` files plus `POLICY.md` and
-    `name_variants.json` (reconstructed from the Policy tab as
-    `{"given_name_groups": [[…]], "company_legal_forms": […]}`; the step-2 reader accepts other shapes).
+  - The real shapes are in section 2.1. Writing the loader against the CSV column names would have
+    failed outright on alerts, whose screened details are nested.
+  - `onboarding` has to be tested before `accounts`, because `{account_id, customer_id}` is a subset
+    of onboarding's required fields.
   - **0 of 127 193** date strings in the folder fall outside the seven formats of D12.
-  - The blocking index is built on demand via `Dataset.name_index(tokenize)`, so the tokeniser stays in
-    `system/names.py` (step 2) and the loader holds no name logic — a deliberate change from the original
-    step-1 wording, which put the index in the loader.
-  - The audit script keeps its own small date/query helpers because it is a diagnostic; step 2 adds a
-    test asserting the real parsers in `system/` agree with it.
+  - `best_matching_name` and `first/middle/last_name` are extra hit names worth feeding to the name
+    comparison: more candidate names make agreement easier, which makes a `NAME_MISMATCH_VERIFIED`
+    clear **harder** — the safe direction.
+  - The audit script keeps its own small date and query helpers because it is a diagnostic;
+    `tests/test_folder_normalisation.py` asserts the real parsers in `system/` agree with it.
 
 ### Step 2 — Normalisation utilities (text, names, countries, partial dates) — **[x] done**
 - **Goal.** Principle 8 implemented exactly, plus country keys and partial-aware dates.
@@ -324,8 +336,8 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
   Dates: `(year, month|None, day|None)`, `year` may be a set of candidates; equality compares only
   parts both sides give. Countries: table (D15) + identity fallback; a helper takes the last
   comma-part after stripping `[tag]` suffixes.
-- **Acceptance — met.** `python3 -m unittest discover -s tests` → **151 tests pass** (18 from step 1,
-  133 new), in 20 s.
+- **Acceptance — met.** `python3 -m unittest discover -s tests` → **155 tests pass** (22 from step 1,
+  133 new), in 16 s.
   - `tests/test_names.py` (48): a case per clause of principle 8, each quoting the sentence it tests —
     parts (case/accents/punctuation/brackets/initials/distinct-once/placeholders/legal forms),
     part matching (identical, variant group, <4 identical only, 4–6 one edit, ≥7 two edits, shorter part
@@ -535,4 +547,4 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
 - [ ] `DECEASED` needs an actual **date** of death; `life_status = Deceased` alone cannot clear.
 - [ ] Hit IDs are **never** evidence; evidence is bank records and `SR-…` ids only.
 - [ ] No dev ids, names or phrasings hard-coded anywhere outside `tests/`.
-- [ ] `dataset/`, `dev/`, `.env` and caches stay out of commits.
+- [ ] `dev/`, `.env` and caches stay out of commits; the data room is never added to the repo.

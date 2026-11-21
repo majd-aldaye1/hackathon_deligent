@@ -1,11 +1,11 @@
-"""Read a data folder into tables and indexes.
+"""Read the data folder into tables and indexes.
 
-Reads only the folder it is given.  Accepts JSON Lines (the format the brief specifies)
-and CSV (the format of the read-only workbook export we developed against), and decides
-what each file is from the fields its records carry rather than from its filename.
+Reads only the folder it is given, one JSON Lines file per table.  Records are normalised
+to a single shape — plain strings for scalars, lists of strings for the multi-valued
+fields — so nothing downstream has to care that the provider writes `null` for an absent
+value, nests the screened customer details inside an object, or sends numbers as numbers.
 """
 
-import csv
 import json
 import os
 import re
@@ -13,9 +13,7 @@ from collections import defaultdict
 
 from . import model
 
-csv.field_size_limit(1 << 30)
-
-DATA_SUFFIXES = (".jsonl", ".ndjson", ".json", ".csv", ".tsv")
+DATA_SUFFIXES = (".jsonl", ".ndjson", ".json")
 
 
 class DataError(Exception):
@@ -25,13 +23,12 @@ class DataError(Exception):
 # --------------------------------------------------------------------------- reading
 
 
-def _read_jsonl(path):
+def _read_records(path):
+    """JSON Lines, or a single JSON array for a folder that ships one."""
     with open(path, "r", encoding="utf-8") as fh:
-        first = fh.read(1)
-        while first and first.isspace():
-            first = fh.read(1)
+        head = fh.read(64).lstrip()
         fh.seek(0)
-        if first == "[":  # a single JSON array, not JSON Lines
+        if head.startswith("["):
             data = json.load(fh)
             return [r for r in data if isinstance(r, dict)]
         out = []
@@ -39,114 +36,106 @@ def _read_jsonl(path):
             line = line.strip()
             if not line:
                 continue
-            rec = json.loads(line)
-            if isinstance(rec, dict):
-                out.append(rec)
+            record = json.loads(line)
+            if isinstance(record, dict):
+                out.append(record)
     return out
-
-
-def _read_sep(path, delimiter):
-    with open(path, "r", encoding="utf-8", newline="") as fh:
-        rows = list(csv.reader(fh, delimiter=delimiter))
-    # The workbook export puts prose above the header on some tabs, so take the first
-    # row that looks like a header: several non-empty cells, all distinct.
-    for i, row in enumerate(rows):
-        cells = [c.strip() for c in row]
-        named = [c for c in cells if c]
-        if len(named) >= 2 and len(set(named)) == len(named):
-            header = cells
-            body = rows[i + 1 :]
-            break
-    else:
-        return []
-    out = []
-    for row in body:
-        if not any(c.strip() for c in row):
-            continue
-        rec = {}
-        for j, key in enumerate(header):
-            if key:
-                rec[key] = row[j] if j < len(row) else ""
-        out.append(rec)
-    return out
-
-
-def _read_records(path):
-    low = path.lower()
-    if low.endswith(".tsv"):
-        return _read_sep(path, "\t")
-    if low.endswith(".csv"):
-        return _read_sep(path, ",")
-    return _read_jsonl(path)
 
 
 # ------------------------------------------------------------------- identify + clean
 
 
 def _identify(path, records):
-    """Which table is this file?  Decided by fields, with the filename only as a tie-break."""
+    """Which table is this file?  The filename first, then the fields it carries."""
     if not records:
         return None
+    stem = re.sub(r"[^a-z]", "", os.path.basename(path).lower())
     fields = set()
-    for rec in records[:50]:
-        fields |= set(rec)
+    for record in records[:50]:
+        fields |= set(record)
     candidates = [t for t in model.TABLES if t.matches(fields)]
     if not candidates:
         return None
-    if len(candidates) > 1:
-        stem = re.sub(r"[^a-z]", "", os.path.basename(path).lower())
-        for hint, name in model.FILENAME_HINTS:
-            if hint in stem:
-                for t in candidates:
-                    if t.name == name:
-                        return t
-        # Otherwise the most specific match wins; TABLES is ordered that way already.
-        candidates.sort(key=lambda t: -len(t.required))
+    for hint, name in model.FILENAME_HINTS:
+        if hint in stem:
+            for table in candidates:
+                if table.name == name:
+                    return table
+    # No usable filename: the most specific signature wins.  TABLES is ordered that way.
     return candidates[0]
 
 
-def _split_multi(value):
+def _as_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        return repr(value) if isinstance(value, float) else str(value)
+    if isinstance(value, (list, tuple)):
+        return "; ".join(t for t in (_as_text(v) for v in value) if t)
+    if isinstance(value, dict):
+        # A hit's `details` is {"pep": "...", "sanctions": "..."}; keep it readable and
+        # keep the keys, which name the kind of listing the text describes.
+        return "\n".join(
+            "%s: %s" % (key, _as_text(value[key])) for key in sorted(value) if _as_text(value[key])
+        )
+    return str(value)
+
+
+def _as_list(value):
     """A multi-valued field, given as a list or as a "; "-joined string."""
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
-        items = [str(v).strip() for v in value]
+        items = [_as_text(v) for v in value]
     elif isinstance(value, str):
         items = [p.strip() for p in value.split(";")]
     else:
-        items = [str(value).strip()]
+        items = [_as_text(value)]
     return [i for i in items if i]
 
 
 def _clean(table, records):
-    """One shape for every record: strings for scalars, lists for multi-valued fields."""
     out = []
     for raw in records:
-        rec = {}
+        record = {}
         for key, value in raw.items():
             key = table.aliases.get(key, key)
+            if key in table.flatten:
+                mapping = table.flatten[key]
+                nested = value if isinstance(value, dict) else {}
+                for inner, target in mapping.items():
+                    record[target] = _as_text(nested.get(inner))
+                continue
             if key in table.multi:
-                rec[key] = _split_multi(value)
-            elif value is None:
-                rec[key] = ""
-            elif isinstance(value, (list, tuple)):
-                rec[key] = "; ".join(str(v).strip() for v in value if str(v).strip())
-            elif isinstance(value, bool):
-                rec[key] = "true" if value else "false"
-            elif isinstance(value, str):
-                rec[key] = value.strip()
+                record[key] = _as_list(value)
             else:
-                rec[key] = str(value)
+                record[key] = _as_text(value)
+        for mapping in table.flatten.values():
+            for target in mapping.values():
+                record.setdefault(target, "")
         for key in table.multi:
-            rec.setdefault(key, [])
-        out.append(rec)
+            record.setdefault(key, [])
+        out.append(record)
     return out
 
 
 # -------------------------------------------------------------------------- the data
 
+REQUIRED_TABLES = (
+    model.ALERTS,
+    model.HITS,
+    model.CUSTOMERS,
+    model.ACCOUNTS,
+    model.ONBOARDING,
+    model.KYC_CHECKS,
+)
 
-class Dataset:
+
+class Dataset(object):
     """Every table in the folder, plus the indexes the resolver and gatherer need."""
 
     def __init__(self, folder):
@@ -169,7 +158,7 @@ class Dataset:
             if not os.path.isfile(path):
                 continue
             low = entry.lower()
-            if low.endswith(".md") or low == "policy":
+            if low.endswith(".md"):
                 with open(path, encoding="utf-8") as fh:
                     self.policy_text += fh.read()
                 continue
@@ -188,18 +177,7 @@ class Dataset:
                 continue
             self.tables[table.name].extend(_clean(table, records))
             self.files.setdefault(table.name, []).append(entry)
-        missing = [
-            n
-            for n in (
-                model.ALERTS,
-                model.HITS,
-                model.CUSTOMERS,
-                model.ACCOUNTS,
-                model.ONBOARDING,
-                model.KYC_CHECKS,
-            )
-            if not self.tables[n]
-        ]
+        missing = [name for name in REQUIRED_TABLES if not self.tables[name]]
         if missing:
             raise DataError(
                 "no file in %s holds these tables: %s" % (self.folder, ", ".join(missing))

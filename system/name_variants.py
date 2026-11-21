@@ -89,6 +89,10 @@ class NameVariants(object):
         return word in self.legal_forms
 
 
+# Keys that hold prose rather than name forms.
+_PROSE_KEYS = ("description", "notes", "note", "comment", "about", "readme")
+
+
 def _words(value):
     if isinstance(value, str):
         return [w.strip().lower() for w in value.split(",") if w.strip()]
@@ -111,6 +115,8 @@ def from_raw(raw):
     if isinstance(raw, dict):
         for key, value in sorted(raw.items()):
             low = key.lower()
+            if any(prose in low for prose in _PROSE_KEYS):
+                continue  # the file's own description of itself, not name forms
             if "legal" in low or "form" in low or "suffix" in low:
                 legal.extend(_words(value))
             elif isinstance(value, (list, tuple)) and any(
@@ -133,6 +139,9 @@ def from_raw(raw):
             words = _words(item)
             if words:
                 groups.append(words)
+    # A name part is one word, so anything with a space in it came from prose.
+    groups = [[w for w in group if " " not in w] for group in groups]
+    groups = [group for group in groups if len(group) >= 2]
     if not groups:
         groups = [_words(g) for g in BUILTIN_GROUPS]
     if not legal:
