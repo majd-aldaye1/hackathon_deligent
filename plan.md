@@ -284,6 +284,7 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 | D22 | Dated-report punctuation | accept `;` after the date / require `:` | **require `:`** — exactly the form POLICY gives | POLICY: "exactly the English lines … of the form"; 13 lines across 11 hits use `;`. Dropping a report can only move the *earliest* report later, which makes the customer older and a `TEMPORAL_IMPOSSIBILITY` clear less likely — the safe direction against the 60-cost error | 2026-11-21 |
 | D23 | Branch | `main` / `dev` | **`dev`** — all work and commits land there | `origin/main` holds a separate complete submission (`4c8e5cd`, `442a9f9`); the user chose to keep this build on `dev` and leave `main` untouched | 2026-11-21 |
 | D24 | A customer name with one real part | may agree / require two matched parts | **may agree**, exactly as principle 8 says ("every part of the shorter name matches") | `preferred_name` is often a bare given name, so this widens the unlinked search. Requiring two matched parts moves ambiguity only 27 → 26 but **loses the customer on 7 unlinked alerts**, and 30 alerts screen a name with fewer than two parts anyway. Extra persons can only make principle 3's unanimity *harder*, so they make clearing less likely, not more — the safe direction | 2026-11-21 |
+| D25 | A verified field the newest check omits | leave it unknown / fall back to an older approved check | **fall back to the most recent approved check that states it** | POLICY names "the most recent approved identity check" as the source for all three fields, but 1 850 provider checks carry no `verified_dob` and 8 note-recorded ones carry no country. An older *approved* check is still verified evidence, and leaving the field unknown would silently demote the customer to their declared data | 2026-11-21 |
 
 ---
 
@@ -446,22 +447,52 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
     `account_id` really belongs to the customer it names — both asserted, so the both-key join is
     verified rather than assumed.
 
-### Step 5 — Verified customer picture
-- **Goal.** The person's fact sheet: verified legal name, DOBs, countries, entity type, each with `source_ids`.
-- **Files.** `system/customer_facts.py`, `system/notes_regex.py`
-- **Notes.** KYC chain: for each record of the person, `Accounts` → `Onboarding` joined on **both**
-  `account_id` and `customer_id` → `kyc_applicant_id` → `KYC checks`; keep `result == "approved"`;
-  pick the latest `checked_at`. Note-recorded checks: `channel == "kyc"` notes on any of the person's
-  emails, parsed by field-extraction regexes (CAPS name run; a date near a `born|DOB|date of birth`
-  cue; a country from the vocabulary; approval cue) — merged with provider checks and ranked by date
-  (D19). Countries = residence + nationality of **every** record of the person + approved document
-  country + places the notes say they lived (D18). DOBs = verified DOB if any, else declared `dob`s
-  of all records (D7), each tagged with its source.
-- **Acceptance.** For the 9 practice records inspected in §3.6 the verified name/DOB/country and its
-  `source_ids` equal the label's; `tests/test_customer_facts.py` asserts the both-key onboarding join
-  (a joint holder never inherits the other's applicant) and that rejected/expired checks are ignored.
-- **Risks.** A wrong verified name is the main `NAME_MISMATCH_VERIFIED` risk → the CAPS-run regex must
-  be exact or yield nothing; no partial guesses.
+### Step 5 — Verified customer picture — **[x] done**
+- **Goal.** The person's fact sheet: verified legal name, dates of birth, countries, entity type,
+  each carrying the record ids it came from.
+- **Files.** `system/facts.py`, `system/kyc.py`, `system/notes_regex.py`,
+  `system/customer_facts.py`, `tests/test_notes_regex.py`, `tests/test_customer_facts.py`
+- **Notes.** `facts.Fact(value, source_ids)` is the unit everything is built from, so step 7's
+  `evidence` is assembled from the facts the firing rule used and there is no second evidence
+  pathway to keep in step. Approved checks come from the KYC provider **and** from
+  `channel="kyc"` notes, merged and ranked by date. Countries = residence + nationality on **every**
+  record of the person + the approved document country + places the notes say they lived. Notes are
+  reached only through the emails on the person's own records.
+- **Acceptance — met.** **294 tests pass** (66 new), 68 s. The verified name, date of birth and
+  source id match **every** practice label that names one — 11 records checked by hand, including
+  all six note-sourced ones (`NOTE-14E25A`, `NOTE-ADDA81`, `NOTE-302C97`, `NOTE-CB3D0D`,
+  `NOTE-8548C1`, `NOTE-CA9BBC`) — and the country list matches **all 11** labels that name one
+  (`CUS-364225` → Singapore, United States; `CUS-048448` → Bangladesh, United Kingdom; …).
+  Across the 461 persons behind the 440 alerts: every one has a verified name and a verified date of
+  birth, 440 of those names are usable for a name clear, none lacks a country, and 162 of the names
+  come from a note rather than the provider. 461 fact sheets in 4 s.
+- **Findings.**
+  - **Note extraction works field by field, not template by template.** 22 567 of the 22 575
+    `kyc` notes yield name, date of birth **and** document country; all 22 575 parse as approved
+    checks. The 8 that withhold a field say "a national ID **dated** 1952-01-21" or
+    "document provided: driving licence (United Kingdom), 23 June 1991" — wording that does not
+    actually claim a birth date, so the fact stays unknown and the declared record date is used.
+    These are the LLM fallback's job in step 10.
+  - **A date of birth cannot be found by direction.** These notes carry two dates in either order
+    (`"whose 1986-12-10 date of birth was confirmed on 2025-03-10"` and `"lists 06/01/1998 as her
+    DOB, is valid as of 2024-08-15"`), so the rule is: the date **nearest** a birth cue wins, and a
+    date introduced by "on" or "as of" is never eligible — unless a birth cue introduced it
+    (`"born on 27/06/1969"`). Before this, 3 notes handed back the date of the check as the date of
+    birth. Now **0 of 22 575** do, and **22 520 agree with the record's declared date**; the **14**
+    that differ are the planted "verified beats declared" cases, including the practice labels'.
+  - Names in notes are written in capitals, so `subject_name` takes the longest run of
+    capitalised-throughout words — tested character by character, not with `[A-Z]`, so `FERNÁNDEZ`
+    and `PAWEŁ` count. Label words (`DOB`, `ID`, `NAME`, …) and digit runs are excluded, and a
+    one-word run is accepted because `"N/a Gilbert"` and `"Sani 0000 0000"` really are one-part names.
+    Every quote is the verbatim span, which may carry punctuation the value drops (`"MD. SAIDUL
+    ISLAM"` quoted, `MD SAIDUL ISLAM` as the name) — asserted over all 22 575 notes.
+  - Approval cues are **stemmed** (`confirm\w*`, `vett\w*`, `pass\w*`), because the unseen set will
+    conjugate them differently; a refusal cue outranks an approval cue. Before stemming, 94 notes
+    read as "no check recorded" because they said "confirms" rather than "confirmed".
+  - **D25 — a field the newest approved check omits falls back to the newest approved check that
+    states it** (new decision, logged below). 1 850 provider checks carry no `verified_dob` at all.
+  - **63 of the 461 persons have a verified legal name that agrees with none of their declared
+    names** — the population `NAME_MISMATCH_VERIFIED` will be drawn from.
 
 ### Step 6 — Hit fact gatherer
 - **Goal.** The hit's fact sheet with `source_ids` (the hit itself, and `SR-…` for search-derived facts).
