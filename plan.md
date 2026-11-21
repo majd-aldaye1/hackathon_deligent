@@ -849,34 +849,47 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
     `max_age_at` fills an unknown month and day with January 1, so it reports the **oldest** the
     customer could have been, and still finds them under 16.
 
-### Step 13 — README and final output
+### Step 13 — README and final output — **[x] done**
 - **Goal.** Deliverables complete.
-- **Files.** `system/README.md`, `output/dev.jsonl`, `plan.md`
-- **Notes.** Architecture diagram, resolution on both sides, the evidence model, determinism, the LLM's
-  two jobs with model/prompt/time/cost, how to run with and without a key, the open assumption from §2,
-  and three worked cases (a mismatch, a match, a review).
-- **Acceptance.** Fresh clone + `system/run dev out.jsonl` works with no network and no key; format check passes.
+- **Files.** `system/README.md`, `README.md`, `output/dev.jsonl`, `plan.md`
+- **Notes.** `system/README.md` covers the architecture diagram, resolution on both sides, the
+  evidence model, the four guards, determinism, the model's three jobs (model, grounding, settings,
+  time, cost), how to run with and without a key, the assumptions, and three worked cases taken from
+  the practice labels and checked with `tools/explain.py`: `H-2808BE` (a clear on the verified name,
+  evidence `KYC-20EE17` alone), `H-0181BD` (a match through a joint account, a merged person, a
+  note-recorded check and an anchored search result) and `H-FF3096` (a review where a support note
+  supplies the shared country, which is the case guard A protects). The root `README.md` points to it.
+- **Acceptance — met.** In a fresh `git clone` of `dev`, which has no `dev/` folder and no `.env`,
+  `env -u OPENROUTER_API_KEY ./system/run <dev folder> out.jsonl` writes 819 lines **byte-identical**
+  to the committed `output/dev.jsonl`, and the language model is reported as not used.
+  `tools/score.py` gives **FORMAT: ok**, cost **0**, unsafe clears **0**, and 50/50 on
+  `reason_code`, `customer_record_id` and exact `evidence`. A folder missing four tables exits **2**
+  with a one-line message. **543 tests pass** with no key. No dev id appears anywhere in `system/`. Every claim in the README was
+  checked against this run.
+- **Open item, not code.** The CSV export added in `2a4c291` (`dataset/*.csv`) has been deleted from
+  the tree but is still in history on `dev`, `main` and `origin/dev`. Only a history rewrite and a
+  force-push would remove it. That is the user's decision to make.
 
 ---
 
 ## 6. Traps checklist
 
-- [ ] `Onboarding` joined on **both** `account_id` **and** `customer_id` — never `account_id` alone (52 joint accounts).
-- [ ] `login_handle` resolves **through `Accounts`**, not `Customers.login_name` (which is empty in all 72 265 rows).
-- [ ] `rejected` and `expired` KYC checks are **not evidence** (2 481 + 2 433 rows).
-- [ ] A shared **phone alone never merges** records — 164 shared phones, only 116 pairs also share a full DOB.
-- [ ] A shared **address alone never merges**.
-- [ ] Search results are **mostly namesakes** — 60 % carry no listing phrase; anchor on phrase **and** country.
-- [ ] `DOB_MISMATCH` needs **every** hit birth date contradicted; one agreeing date blocks it.
-- [ ] A country difference **does not clear** a hit whose name **and** DOB agree → `REVIEW`.
-- [ ] `NAME_LOCATION_MATCH` is **companies only**.
-- [ ] An **unknown fact is never a mismatch** — missing month/day, missing country, missing DOB all stay unknown.
-- [ ] **Never read another customer's records** — facts come only from the resolved person's own records.
-- [ ] `NAME_MISMATCH_VERIFIED` requires a **verified** legal name (approved check or an approved check written up in a note); a declared name never clears.
-- [ ] Individuals with **< 2 real name parts** (placeholders) can be neither confirmed nor cleared on name.
-- [ ] `International` and `Europe` are **not countries**; territories are their **own** country.
-- [ ] Dated reports are **only** `According to …; <Month D, YYYY>: …` — `June 2014` and `SAM:` lines do not count.
-- [ ] `DECEASED` needs an actual **date** of death; `life_status = Deceased` alone cannot clear.
-- [ ] Hit IDs are **never** evidence; evidence is bank records and `SR-…` ids only.
-- [ ] No dev ids, names or phrasings hard-coded anywhere outside `tests/`.
-- [ ] `dev/`, `.env` and caches stay out of commits; the data room is never added to the repo.
+- [x] `Onboarding` joined on **both** `account_id` **and** `customer_id` — never `account_id` alone (52 joint accounts).
+- [x] `login_handle` resolves **through `Accounts`**, not `Customers.login_name` (which is empty in all 72 265 rows).
+- [x] `rejected` and `expired` KYC checks are **not evidence** (2 481 + 2 433 rows).
+- [x] A shared **phone alone never merges** records — 164 shared phones, only 116 pairs also share a full DOB.
+- [x] A shared **address alone never merges**.
+- [x] Search results are **mostly namesakes** — 60 % carry no listing phrase; anchor on phrase **and** country.
+- [x] `DOB_MISMATCH` needs **every** hit birth date contradicted; one agreeing date blocks it.
+- [x] A country difference **does not clear** a hit whose name **and** DOB agree → `REVIEW`.
+- [x] `NAME_LOCATION_MATCH` is **companies only**.
+- [x] An **unknown fact is never a mismatch** — missing month/day, missing country, missing DOB all stay unknown.
+- [x] **Never read another customer's records** — facts come only from the resolved person's own records.
+- [x] `NAME_MISMATCH_VERIFIED` requires a **verified** legal name (approved check or an approved check written up in a note); a declared name never clears.
+- [x] Individuals with **< 2 real name parts** (placeholders) can be neither confirmed nor cleared on name.
+- [x] `International` and `Europe` are **not countries**; territories are their **own** country.
+- [x] Dated reports are **only** `According to …; <Month D, YYYY>: …` — `June 2014` and `SAM:` lines do not count.
+- [x] `DECEASED` needs an actual **date** of death; `life_status = Deceased` alone cannot clear.
+- [x] Hit IDs are **never** evidence; evidence is bank records and `SR-…` ids only.
+- [x] No dev ids, names or phrasings hard-coded anywhere outside `tests/`.
+- [x] `dev/`, `.env` and caches stay out of commits; the data room is never added to the repo.
