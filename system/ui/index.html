@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Namesake — Alert Review</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#14171f; --muted:#5d6472; --faint:#8a909c; --line:#e3e6eb; --hover:#f1f3f6;
+  --accent:#3355ff; --accent-soft:#e8ecff;
+  --clear:#127a4a; --clear-soft:#e3f5ec; --same:#c22b3a; --same-soft:#fde8ea; --rev:#a86200; --rev-soft:#fdf1de;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0f1115; --panel:#171a21; --ink:#e7e9ee; --muted:#a3a9b6; --faint:#737a88; --line:#262a33; --hover:#1e222b;
+    --accent:#7b93ff; --accent-soft:#1f2747; --clear:#4cc38a; --clear-soft:#13291f; --same:#ff6b78; --same-soft:#34161b;
+    --rev:#f0a43a; --rev-soft:#33240f; }
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.45 var(--sans)}
+button{font:inherit;color:inherit}
+header{display:flex;align-items:center;gap:20px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;letter-spacing:-.01em}
+.brand .logo{width:26px;height:26px;border-radius:7px;background:var(--ink);color:var(--panel);display:grid;place-items:center;font-size:13px}
+.brand small{font-weight:500;color:var(--muted);font-size:12.5px}
+.kpis{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+.kpi{padding:6px 12px;border:1px solid var(--line);border-radius:10px;min-width:96px;background:var(--panel)}
+.kpi b{display:block;font-size:17px;font-variant-numeric:tabular-nums}
+.kpi span{font-size:11.5px;color:var(--muted)}
+.kpi.clear b{color:var(--clear)} .kpi.same b{color:var(--same)} .kpi.rev b{color:var(--rev)} .kpi.acc b{color:var(--accent)}
+.app{display:grid;grid-template-columns:340px 1fr;height:calc(100vh - 59px)}
+aside{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--panel)}
+.filters{padding:12px;border-bottom:1px solid var(--line);display:grid;gap:8px}
+.filters input,.filters select{width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{flex:1;padding:6px 4px;border:0;background:transparent;cursor:pointer;font-size:12.5px;color:var(--muted)}
+.seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.row2{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted)}
+.row2 label{display:flex;gap:6px;align-items:center;cursor:pointer;white-space:nowrap}
+.row2 input{width:auto;margin:0}
+#list{overflow:auto;flex:1}
+.item{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
+.item:hover{background:var(--hover)} .item.sel{background:var(--accent-soft)}
+.item .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .sub{grid-column:1/-1;color:var(--faint);font-size:12px;display:flex;gap:8px}
+.pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;letter-spacing:.02em;white-space:nowrap;align-self:center}
+.pill.CLEARED,.pill.DIFFERENT_ENTITY{background:var(--clear-soft);color:var(--clear)}
+.pill.ESCALATED,.pill.SAME_ENTITY{background:var(--same-soft);color:var(--same)}
+.pill.REVIEW{background:var(--rev-soft);color:var(--rev)}
+main{overflow:auto;padding:22px 28px 60px}
+.empty{color:var(--muted);padding:40px;text-align:center}
+.banner{border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px;border:1px solid var(--line)}
+.banner.CLEARED{background:var(--clear-soft);border-color:transparent} .banner.ESCALATED{background:var(--same-soft);border-color:transparent} .banner.REVIEW{background:var(--rev-soft);border-color:transparent}
+.banner .big{font-size:18px;font-weight:700}
+.banner.CLEARED .big{color:var(--clear)} .banner.ESCALATED .big{color:var(--same)} .banner.REVIEW .big{color:var(--rev)}
+.banner .why{color:var(--muted)}
+h1{font-size:22px;margin:0 0 4px;letter-spacing:-.015em}
+.meta{display:flex;flex-wrap:wrap;gap:6px 16px;color:var(--muted);font-size:13px;margin-bottom:16px}
+.meta b{color:var(--ink);font-weight:600}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin:26px 0 10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+.path{list-style:none;margin:0;padding:0;counter-reset:s}
+.path li{position:relative;padding:4px 0 8px 28px;color:var(--muted);font-size:13px}
+.path li::before{counter-increment:s;content:counter(s);position:absolute;left:0;top:3px;width:18px;height:18px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:700;display:grid;place-items:center}
+.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:12px}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:4px 10px;font-size:13px}
+.kv dt{color:var(--faint)} .kv dd{margin:0}
+.chip{display:inline-flex;align-items:center;gap:4px;font:12px var(--mono);padding:1px 7px;border-radius:6px;background:var(--hover);border:1px solid var(--line);cursor:pointer;margin:1px 2px 1px 0;color:var(--ink)}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.chip.cited{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.hit-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.hit-head .t{flex:1;min-width:240px}
+.hit-head .t .n{font-size:16px;font-weight:700}
+.hit-head .t .c{color:var(--muted);font-size:12.5px}
+.decision{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.code{font:600 12px var(--mono);color:var(--muted)}
+.expl{margin:12px 0 4px;padding:10px 12px;border-left:3px solid var(--line);background:var(--bg);border-radius:0 8px 8px 0;font-size:13.5px}
+.expl.DIFFERENT_ENTITY{border-color:var(--clear)} .expl.SAME_ENTITY{border-color:var(--same)} .expl.REVIEW{border-color:var(--rev)}
+table.cmp{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
+table.cmp th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);font-weight:600}
+table.cmp td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+table.cmp td.k{color:var(--muted);width:110px;font-weight:600}
+table.cmp td.v{width:110px}
+.st{font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:6px;white-space:nowrap}
+.st.agree{background:var(--clear-soft);color:var(--clear)} .st.contradict{background:var(--same-soft);color:var(--same)}
+.st.unknown,.st.differs,.st.clear{background:var(--hover);color:var(--muted)}
+.st.contradict::before{content:"✕ "} .st.agree::before{content:"✓ "}
+.small{font-size:12px;color:var(--faint)}
+.lab{margin-top:10px;font-size:12.5px;padding:6px 10px;border-radius:8px;display:inline-block}
+.lab.ok{background:var(--clear-soft);color:var(--clear)} .lab.bad{background:var(--same-soft);color:var(--same)}
+details summary{cursor:pointer;color:var(--accent);font-size:12.5px;margin-top:10px}
+pre{white-space:pre-wrap;word-break:break-word;font:12px/1.5 var(--mono);background:var(--bg);padding:10px;border-radius:8px;border:1px solid var(--line);max-height:320px;overflow:auto}
+#drawer{position:fixed;top:0;right:0;height:100%;width:min(520px,100%);background:var(--panel);border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(0,0,0,.12);transform:translateX(105%);transition:transform .18s ease;z-index:20;display:flex;flex-direction:column}
+#drawer.open{transform:none}
+#drawer .dh{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+#drawer .dh b{font:600 14px var(--mono)} #drawer .dh span{color:var(--muted);font-size:12.5px}
+#drawer .dh button{margin-left:auto;border:1px solid var(--line);background:transparent;border-radius:8px;padding:4px 10px;cursor:pointer}
+#drawer .db{padding:14px 18px;overflow:auto}
+#drawer table{width:100%;border-collapse:collapse;font-size:13px}
+#drawer td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+#drawer td:first-child{color:var(--faint);width:150px;font:12px var(--mono)}
+.kbd{font:11px var(--mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;color:var(--muted)}
+.persons-split{display:grid;gap:8px;margin-top:10px}
+.persons-split .pp{font-size:12.5px;padding:8px 10px;border:1px dashed var(--line);border-radius:8px}
+@media (max-width:860px){ .app{grid-template-columns:1fr;height:auto} aside{max-height:45vh} main{padding:16px} .kpis{display:none} }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="logo">N</div><div>Namesake<br><small>Is the hit the customer?</small></div></div>
+  <div class="kpis" id="kpis"></div>
+</header>
+<div class="app">
+  <aside>
+    <div class="filters">
+      <input id="q" placeholder="Search name, alert, hit or record ID…  ( / )">
+      <div class="seg" id="seg">
+        <button data-o="ALL" class="on">All</button><button data-o="CLEARED">Cleared</button><button data-o="ESCALATED">Escalated</button><button data-o="REVIEW">Review</button>
+      </div>
+      <select id="code"><option value="">Any reason code</option></select>
+      <div class="row2"><label><input type="checkbox" id="labOnly"> Practice-labelled only</label><span style="margin-left:auto" id="nshown"></span></div>
+    </div>
+    <div id="list"></div>
+  </aside>
+  <main id="main"><div class="empty">Loading decisions…</div></main>
+</div>
+<div id="drawer"><div class="dh"><b id="dId"></b><span id="dT"></span><button onclick="closeDrawer()">Close</button></div><div class="db" id="dB"></div></div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let DATA = null, VIEW = [], SEL = null, OUT = "ALL";
+const OUTCOME_TXT = {CLEARED:"Alert cleared", ESCALATED:"Escalate to compliance", REVIEW:"Needs analyst review"};
+const DEC_TXT = {DIFFERENT_ENTITY:"Different entity", SAME_ENTITY:"Same entity", REVIEW:"Review"};
+
+fetch("trace.json").then(r => r.json()).then(d => { DATA = d; init(); })
+  .catch(e => { $("#main").innerHTML = `<div class="empty">Could not load trace.json — run <code>python3 run.py</code> first.<br>${esc(e)}</div>`; });
+
+function init(){
+  const A = DATA.alerts, hits = A.flatMap(a => a.hits);
+  const oc = k => A.filter(a => a.outcome === k).length;
+  const labelled = hits.filter(h => h.label), ok = labelled.filter(h => h.label.match).length;
+  const worst = labelled.filter(h => h.label.decision === "SAME_ENTITY" && h.decision === "DIFFERENT_ENTITY").length;
+  $("#kpis").innerHTML = `
+    <div class="kpi"><b>${A.length}</b><span>alerts · ${hits.length} hits</span></div>
+    <div class="kpi clear"><b>${oc("CLEARED")}</b><span>auto-cleared (${Math.round(100*oc("CLEARED")/A.length)}%)</span></div>
+    <div class="kpi same"><b>${oc("ESCALATED")}</b><span>escalated</span></div>
+    <div class="kpi rev"><b>${oc("REVIEW")}</b><span>to analyst</span></div>
+    ${labelled.length ? `<div class="kpi acc"><b>${ok}/${labelled.length}</b><span>practice labels · ${worst} unsafe clears</span></div>` : ""}`;
+  const codes = [...new Set(hits.map(h => h.reason_code))].sort();
+  $("#code").innerHTML += codes.map(c => `<option>${c}</option>`).join("");
+  $("#seg").onclick = e => { const b = e.target.closest("button"); if(!b) return; OUT = b.dataset.o; [...$("#seg").children].forEach(x => x.classList.toggle("on", x === b)); render(); };
+  ["#q","#code","#labOnly"].forEach(s => $(s).addEventListener("input", render));
+  document.addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") { if (e.key === "Escape") e.target.blur(); return; }
+    if (e.key === "/") { e.preventDefault(); $("#q").focus(); }
+    if (e.key === "j" || e.key === "ArrowDown") { move(1); e.preventDefault(); }
+    if (e.key === "k" || e.key === "ArrowUp") { move(-1); e.preventDefault(); }
+    if (e.key === "Escape") closeDrawer();
+  });
+  const fromHash = decodeURIComponent(location.hash.slice(1));
+  render();
+  select(DATA.alerts.find(a => a.alert_id === fromHash) ? fromHash : (VIEW[0] && VIEW[0].alert_id));
+}
+function move(d){ const i = VIEW.findIndex(a => a.alert_id === SEL); const n = VIEW[Math.max(0, Math.min(VIEW.length-1, i + d))]; if (n) { select(n.alert_id); document.querySelector(`.item[data-id="${n.alert_id}"]`)?.scrollIntoView({block:"nearest"}); } }
+function render(){
+  const q = $("#q").value.trim().toLowerCase(), code = $("#code").value, lab = $("#labOnly").checked;
+  VIEW = DATA.alerts.filter(a => (OUT === "ALL" || a.outcome === OUT)
+    && (!code || a.hits.some(h => h.reason_code === code))
+    && (!lab || a.has_label)
+    && (!q || JSON.stringify([a.alert_id, a.screened.customer_name, a.hits.map(h => [h.hit_id, h.hit.name, h.customer_record_id]), a.people.map(p => p.records)]).toLowerCase().includes(q)));
+  $("#nshown").textContent = `${VIEW.length} shown`;
+  $("#list").innerHTML = VIEW.map(a => `
+    <div class="item ${a.alert_id === SEL ? "sel" : ""}" data-id="${a.alert_id}" onclick="select('${a.alert_id}')">
+      <div class="nm">${esc(a.screened.customer_name)}</div><span class="pill ${a.outcome}">${a.outcome}</span>
+      <div class="sub"><span>${a.alert_id}</span><span>${a.hits.length} hit${a.hits.length > 1 ? "s" : ""}</span><span>${esc(a.screened.entity_type)}</span>${a.has_label ? "<span>· labelled</span>" : ""}</div>
+    </div>`).join("") || `<div class="empty">No alerts match.</div>`;
+}
+function chip(id, cited){ if (!id) return ""; const has = DATA.records[id]; return `<span class="chip ${cited ? "cited" : ""}" onclick="openRec('${esc(id)}')" title="${has ? "Open record" : "Record"}">${esc(id)}</span>`; }
+function chips(ids, cited){ return (ids || []).map(i => chip(i, cited)).join(""); }
+function select(id){
+  if (!id) { $("#main").innerHTML = `<div class="empty">No alert selected.</div>`; return; }
+  SEL = id; history.replaceState(null, "", "#" + id);
+  document.querySelectorAll(".item").forEach(x => x.classList.toggle("sel", x.dataset.id === id));
+  const a = DATA.alerts.find(x => x.alert_id === id), s = a.screened;
+  const link = s.account_ref ? `account ${s.account_ref}` : s.login_handle ? `login ${s.login_handle}` : s.email ? `email ${s.email}` : "no link — matched on screened details";
+  const sameHits = a.hits.filter(h => h.decision === "SAME_ENTITY"), revHits = a.hits.filter(h => h.decision === "REVIEW");
+  const why = a.outcome === "CLEARED" ? `All ${a.hits.length} hit${a.hits.length>1?"s are":" is"} a different entity, each on a contradiction.`
+            : a.outcome === "ESCALATED" ? `${sameHits.map(h => h.hit.name).join(", ")} ${sameHits.length>1?"are":"is"} the customer.`
+            : `${revHits.length} hit${revHits.length>1?"s":""} cannot be settled from the evidence.`;
+  $("#main").innerHTML = `
+    <div class="banner ${a.outcome}"><div><div class="big">${OUTCOME_TXT[a.outcome]}</div><div class="why">${esc(why)}</div></div></div>
+    <h1>${esc(s.customer_name)}</h1>
+    <div class="meta"><span>${a.alert_id}</span><span>Screened <b>${esc(s.screened_at)}</b></span><span>${esc(s.entity_type)}</span>
+      ${s.dob ? `<span>DOB <b>${esc(s.dob)}</b></span>` : ""}${s.country ? `<span>Country <b>${esc(s.country)}</b></span>` : ""}${s.city ? `<span>City <b>${esc(s.city)}</b></span>` : ""}
+      <span>Link: <b>${esc(link)}</b></span></div>
+    <h2>1 · Who is the customer</h2>
+    <div class="card"><ol class="path">${a.path.map(p => `<li>${linkify(p)}</li>`).join("")}</ol></div>
+    <div class="people">${a.people.map(personCard).join("") || `<div class="card small">No customer record fits this alert.</div>`}</div>
+    <h2>2 · Hits (${a.hits.length})</h2>
+    ${a.hits.map(hitCard).join("")}`;
+}
+function linkify(t){ return esc(t).replace(/\b((?:CUS|KYC|NOTE|SR|ACC|APP)-[0-9A-F]{6})\b/g, m => DATA.records[m] ? `<span class="chip" onclick="openRec('${m}')">${m}</span>` : `<code>${m}</code>`); }
+function personCard(p){
+  const v = p.verified;
+  const ctry = Object.entries(p.countries || {}).map(([c, src]) => `<div>${esc(c)} <span class="small">via</span> ${chips(src)}</div>`).join("");
+  return `<div class="card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><b>${esc(p.names[0] || p.primary)}</b><span class="small">${esc(p.entity_type)} · ${p.records.length} record${p.records.length>1?"s":""}</span></div>
+    <dl class="kv">
+      <dt>Records</dt><dd>${chips(p.records)}</dd>
+      <dt>Names on record</dt><dd>${esc(p.names.join(" · "))}</dd>
+      <dt>Verified identity</dt><dd>${v ? `<b>${esc(v.name)}</b>${v.dob ? `, born ${esc(v.dob)}` : ""}${v.country ? `, document from ${esc(v.country)}` : ""}<br><span class="small">latest approved check ${chip(v.id)} on ${esc(v.date)} (${v.kind === "note" ? "onboarding note" : "KYC provider"})</span>` : `<span class="small">no approved identity check</span>`}</dd>
+      <dt>Date of birth used</dt><dd>${p.dob ? `${esc(p.dob)} ${chip(p.dob_src)}` : `<span class="small">unknown</span>`}</dd>
+      <dt>Countries</dt><dd>${ctry || `<span class="small">none</span>`}</dd>
+      ${p.checks.length > 1 ? `<dt>Approved checks</dt><dd>${chips(p.checks.map(c => c.id))}</dd>` : ""}
+    </dl></div>`;
+}
+function st(s){ return `<span class="st ${s}">${({agree:"agrees",contradict:"contradicts",unknown:"no data",differs:"differs",clear:"no conflict"})[s] || s}</span>`; }
+function hitCard(h){
+  const f = h.facts, H = h.hit, sig = (h.per_person[0] || {}).signals;
+  const cats = [H.primary_category || "", H.categories].filter(Boolean).join(" · ");
+  let rows = "";
+  if (sig) {
+    const n = sig.name, d = sig.dob, l = sig.location, t = sig.time, de = sig.deceased, ty = sig.type;
+    rows = `
+    <tr><td class="k">Type</td><td>${esc(ty.customer || "—")}</td><td>${esc(ty.hit || "—")}</td><td class="v">${st(ty.state)}</td></tr>
+    <tr><td class="k">Name</td><td>${esc((n.customer || []).join(" · ") || "—")} ${n.verified ? `<span class="small">verified</span>` : ""} ${chips(n.src)}</td><td>${esc((n.hit || []).join(" · "))}${n.matched ? `<div class="small">agrees with “${esc(n.matched)}”</div>` : ""}</td><td class="v">${st(n.state)}</td></tr>
+    <tr><td class="k">Date of birth</td><td>${esc(d.customer || "—")} ${chip(d.customer_src)}</td><td>${d.hit.length ? esc(d.hit.join(" or ")) + `<div class="small">from ${esc(d.hit_origin)} ${chips(d.hit_src)}</div>` : "—"}</td><td class="v">${st(d.state)}</td></tr>
+    <tr><td class="k">Location</td><td>${Object.keys(l.customer || {}).map(esc).join(", ") || "—"}</td><td>${(l.hit || []).map(esc).join(", ") || "—"}</td><td class="v">${st(l.state)}</td></tr>
+    <tr><td class="k">Earliest report</td><td>—</td><td>${t.earliest_report ? esc(t.earliest_report) + `<div class="small">${esc(t.line.slice(0, 140))}…</div>` : "—"}</td><td class="v">${st(t.state)}</td></tr>
+    <tr><td class="k">Date of death</td><td>—</td><td>${esc(de.date || "—")}</td><td class="v">${st(de.state)}</td></tr>`;
+  }
+  const multi = h.per_person.length > 1 ? `<div class="persons-split">${h.per_person.map(x => `<div class="pp"><b>${chip(x.customer)}</b> → <span class="pill ${x.decision}">${DEC_TXT[x.decision]}</span> <span class="code">${x.reason_code}</span><div class="small" style="margin-top:4px">${esc(x.explanation)}</div></div>`).join("")}</div>` : "";
+  const lab = h.label ? `<div class="lab ${h.label.match ? "ok" : "bad"}">${h.label.match ? "✓ Matches practice label" : `✕ Practice label: ${h.label.decision} / ${h.label.codes.join(", ")}`}</div>` : "";
+  return `<div class="card">
+    <div class="hit-head">
+      <div class="t"><div class="n">${esc(H.name)}</div><div class="c">${h.hit_id} · ${esc(H.entity_type)} · ${esc(cats)} · match score ${esc(H.match_score)}</div>
+        ${H.position_or_allegation ? `<div class="c" style="margin-top:4px">${esc(String(H.position_or_allegation).slice(0, 220))}</div>` : ""}</div>
+      <div class="decision"><span class="pill ${h.decision}">${DEC_TXT[h.decision]}</span><span class="code">${h.reason_code}</span></div>
+    </div>
+    <div class="expl ${h.decision}">${esc(h.explanation)}</div>
+    <div class="small">Customer record: ${h.customer_record_id ? (h.customer_record_id === "AMBIGUOUS" ? "<b>AMBIGUOUS</b>" : chip(h.customer_record_id)) : "<b>none found</b>"} · Evidence: ${chips(h.evidence, true) || "—"}</div>
+    ${multi}
+    ${sig && h.per_person.length === 1 ? `<table class="cmp"><thead><tr><th></th><th>Customer</th><th>Hit</th><th>Check</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+    ${lab}
+    <details><summary>Hit profile</summary><pre>${esc(Object.entries(H).filter(([k, v]) => v && String(v).trim()).map(([k, v]) => `${k}: ${v}`).join("\n"))}</pre></details>
+  </div>`;
+}
+function openRec(id){
+  const r = DATA.records[id];
+  $("#dId").textContent = id; $("#dT").textContent = r ? r._table : "";
+  $("#dB").innerHTML = r ? `<table>${Object.entries(r).filter(([k]) => k !== "_table").map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>` : `<div class="small">Record not included in the trace.</div>`;
+  $("#drawer").classList.add("open");
+}
+function closeDrawer(){ $("#drawer").classList.remove("open"); }
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+out/
+__pycache__/
+*.pyc
+.DS_Store
+
+# data room: event participants only, never commit
+dataset/
+dev/
+
+# secrets
+.env
+.env.*
