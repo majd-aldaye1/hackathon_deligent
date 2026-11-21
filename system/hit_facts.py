@@ -202,7 +202,13 @@ def states_a_birth(profile_notes):
 
 
 def country_keys(hit):
-    """Every country tied to the hit, in POLICY principle 5's order."""
+    """Every country tied to the hit, in POLICY principle 5's order.
+
+    `countries`, `nationality` and `citizenship` are declared to hold countries, so an
+    unrecognised spelling there still counts as a country.  `addresses` and
+    `place_of_birth` hold places, and the last part of a place is not always a country at
+    all, so those are read strictly: no country rather than an invented one.
+    """
     keys = []
     for field in _COUNTRY_FIELDS:
         for value in hit.get(field, ()) or ():
@@ -210,10 +216,10 @@ def country_keys(hit):
             if key and key not in keys:
                 keys.append(key)
     for value in hit.get("addresses", ()) or ():
-        key = countries.key_from_place(value)
+        key = countries.key_from_place(value, strict=True)
         if key and key not in keys:
             keys.append(key)
-    key = countries.key_from_place(hit.get("place_of_birth", ""))
+    key = countries.key_from_place(hit.get("place_of_birth", ""), strict=True)
     if key and key not in keys:
         keys.append(key)
     return keys

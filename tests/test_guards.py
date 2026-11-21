@@ -235,3 +235,82 @@ class TestContradictionState(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestAPlaceIsNotAlwaysACountry(unittest.TestCase):
+    """Guard D, found in step 12's review of the clears.
+
+    `addresses` and `place_of_birth` hold places.  The last part of a place is often a
+    country and sometimes is not one at all, and the country table's identity fallback
+    turned "12 Main Street, Apartment 4" into a country called "apartment 4" — which gave
+    the hit a country the customer did not share, and cleared it.
+    """
+
+    def test_a_street_address_yields_no_country(self):
+        from system import countries
+
+        for text in ["12 Main Street, Apartment 4", "Apartment 4", "Suite 302", "Flat 2B",
+                     "75002 Paris"]:
+            self.assertIsNone(countries.key_from_place(text, strict=True), text)
+
+    def test_a_real_country_at_the_end_still_works(self):
+        from system import countries
+
+        self.assertEqual(countries.key_from_place("Canada [PEP]", strict=True), "Canada")
+        self.assertEqual(
+            countries.key_from_place("Bailen, 3, Madrid, 28071, Spain [Business]", strict=True),
+            "Spain",
+        )
+        self.assertEqual(
+            countries.key_from_place("Zamora, Zamora, Spain", strict=True), "Spain"
+        )
+
+    def test_a_declared_country_field_keeps_the_identity_fallback(self):
+        from system import countries
+
+        # Not strict: the field is declared to hold a country, so an unrecognised spelling
+        # still equals itself and can still match the same spelling on the other side.
+        self.assertEqual(countries.key_from_place("Atlantis"), "atlantis")
+        self.assertIsNone(countries.key_from_place("Atlantis", strict=True))
+
+    def test_a_hit_reads_addresses_strictly_and_country_fields_loosely(self):
+        row = {
+            "countries": ["Atlantis"], "nationality": [], "citizenship": [],
+            "addresses": ["12 Main Street, Apartment 4"], "place_of_birth": "Suite 302",
+        }
+        self.assertEqual(hit_facts.country_keys(row), ["atlantis"])
+
+    def test_a_hit_with_only_a_street_address_cannot_clear_on_location(self):
+        row = {
+            "hit_id": "H-1", "alert_id": "A-1", "entity_type": "Individual",
+            "name": "Lovelace, Ada", "dobs": [], "categories": ["PEP"],
+            "primary_category": "PEP", "countries": [],
+            "addresses": ["12 Main Street, Apartment 4"], "profile_notes": "",
+        }
+        with fixture.Folder(
+            alerts=[fixture.alert(alert_id="A-1", name="x", hit_ids=["H-1"])],
+            hits=[row],
+            customers=[fixture.customer("CUS-A", "Ada Lovelace", residence_country="Spain",
+                                        nationality="Spanish")],
+        ) as data:
+            facts = hit_facts.gather(data, row)
+            sheet = cf.gather(data, ["CUS-A"])
+            self.assertEqual(facts.countries, [])
+            self.assertIsNone(rules.location_mismatch(sheet, facts, screened()))
+
+    def test_a_side_whose_every_country_is_unrecognised_cannot_clear(self):
+        row = hit(countries=("Atlantis",))
+        self.assertIsNone(
+            rules.location_mismatch(
+                customer(countries=("Spain",)), row, screened()
+            )
+        )
+
+    def test_one_recognised_country_is_enough_to_clear(self):
+        self.assertIsNotNone(
+            rules.location_mismatch(
+                customer(countries=("Spain",)),
+                hit(countries=("Atlantis", "United States")),
+                screened(),
+            )
+        )

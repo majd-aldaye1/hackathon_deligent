@@ -238,6 +238,10 @@ def location_mismatch(customer, hit, screened, variants=None):
         return None
     if not _sure(customer.country_facts()):
         return None  # every country we have is a model's reading
+    if not any(countries.is_known(k) for k in customer.country_keys()):
+        return None  # nothing we can actually place on the customer's side
+    if not any(countries.is_known(k) for k in hit.countries):
+        return None  # nothing we can actually place on the hit's side
     if getattr(hit, "dob_unreadable", False) and names_agree(customer, hit, variants)[0]:
         # POLICY's location rule has an exception for a hit "whose name and date of birth
         # agree".  The hit's profile talks about a birth we could not read, so whether the

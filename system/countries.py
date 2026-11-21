@@ -251,6 +251,7 @@ for _key, _codes, _extras in _ROWS:
         _add(_key, _extra)
 
 KNOWN_NAMES = sorted({k for k, _c, _e in _ROWS})
+_KNOWN_SET = frozenset(KNOWN_NAMES)
 
 
 def key(text):
@@ -274,11 +275,17 @@ def key(text):
     return bare
 
 
-def key_from_place(text):
+def key_from_place(text, strict=False):
     """A country key from a place that may name a city and region first.
 
     Tries the whole string, then its last comma-separated piece, which is how hit
     addresses and places of birth name their country.
+
+    `strict=True` returns None when neither is a country we know.  Use it for a field whose
+    content is a *place*, not a country: the last part of "12 Main Street, Apartment 4" is
+    not an unrecognised country, it is not a country at all, and letting the identity
+    fallback invent one from it would hand a hit a country it has no connection to — and a
+    hit with a country the customer does not share is a hit that gets cleared.
     """
     if not text:
         return None
@@ -293,9 +300,15 @@ def key_from_place(text):
         bare = " ".join(norm.words(tail))
         if bare in _LOOKUP:
             return _LOOKUP[bare]
-    # Nothing in the table: fall back to the whole string's own key, so an unrecognised
-    # country still equals itself rather than silently disappearing.
+    if strict:
+        return None
+    # A field declared to hold a country: an unrecognised spelling still equals itself
+    # rather than silently disappearing.
     return key(tail or text)
+
+
+def is_known(key_value):
+    return key_value in _KNOWN_SET
 
 
 def mentioned_in(text, keys=None):

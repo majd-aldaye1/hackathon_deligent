@@ -289,6 +289,7 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 | D27 | A fact source that is present but unreadable | treat the fact as absent / treat the set as unknown and refuse to clear | **treat the set as unknown** — guards A, B and C | POLICY's contradictions quantify over *every* country / *every* birth date, so an unread fact makes the set unknown rather than smaller, and "unknown is not a mismatch". Measured with `tools/ablate.py`: without the guards, a failed extractor turns **51** hits into clears, two of them practice labels whose truth is `SAME_ENTITY`. With them, all five ablations produce **0** new clears, at **no cost on dev** | 2026-11-21 |
 | D28 | A fact the language model recovered | treat it like any other fact / let it block a clear but never carry one | **block only** (`Fact.provisional`) | a clear that is wrong costs 60 against 3 for a review, and a model is not reproducible the way a pattern is, while reproducibility is 10 % of the score. A provisional fact still belongs to the set a contradiction quantifies over, so it can stop a clear. The pattern layer stays fully authoritative, so the cost is confined to genuinely reworded text | 2026-11-21 |
 | D29 | Where the API key comes from | `OPENROUTER_API_KEY`, or also a `.env` file | **the environment variable only**, in `system/`; `.env` stays in `tools/` | the brief names the variable and a grader will set it. Reading a file beside the code made a graded run depend on an untracked file and made the "no key, regex only" path impossible to test | 2026-11-21 |
+| D30 | The last part of an address or place of birth | treat an unrecognised tail as a country (identity fallback) / as no country | **as no country** (`strict=True`); declared country fields keep the fallback | found in step 12's audit: the fallback turned `"12 Main Street, Apartment 4"` into a country named `"apartment 4"`, which handed the hit a country the customer did not share and **cleared it**. A place's last part is not a mis-spelled country, it is not a country. Free on dev, where every tail is a real country | 2026-11-21 |
 
 ---
 
@@ -784,12 +785,69 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
     the 72 000-record person index inside a 440-iteration loop — eight minutes of pure waste for a
     property one index proves.
 
-### Step 12 — Safety review of clears
+### Step 12 — Safety review of the clears — **[x] done**
 - **Goal.** Convince ourselves the 60-cost error is not happening on unlabelled data.
-- **Files.** `tools/review_clears.py`, notes in `plan.md`
-- **Notes.** Sample ≥ 30 `DIFFERENT_ENTITY` hits across **all** codes on unlabelled dev hits; read the
-  fact sheets by hand; any clear resting on a fact that could be wrong → tighten the rule, not the case.
-- **Acceptance.** Every sampled clear traced to a POLICY sentence and present facts; findings written here.
+- **Files.** `tools/review_clears.py`, `system/countries.py`, `system/hit_facts.py`,
+  `system/rules.py`, `tests/test_guards.py`
+- **Notes.** **462 of the 819 decisions are clears and only 28 carry a label**, so sampling 30 by
+  eye is not a review. `tools/review_clears.py` walks **all 462**, works out which facts carried
+  each one, and flags the structural weaknesses worth a human look: a declared date of birth with
+  no verified check behind it, a country set that came from one record, a clear where the name
+  agrees so the other fact carries it alone, a date read out of prose or a search result, a
+  partially known date.
+- **What the audit found across all 462.**
+
+  | | |
+  |---|---|
+  | `LOCATION_MISMATCH` | 254 |
+  | `DOB_MISMATCH` | 92 |
+  | `NAME_MISMATCH_VERIFIED` | 89 |
+  | `TEMPORAL_IMPOSSIBILITY` | 22 |
+  | `DECEASED` | 4 |
+  | `ENTITY_TYPE_MISMATCH` | 1 |
+
+  Two flags **never** appear, which is the reassuring part: **no clear rests on a declared date of
+  birth** (`declared-dob` 0 — every one has a verified check behind it), and **no location clear
+  rests on a single source** (`one-country-source` 0, `no-document-country` 0 — every one is
+  corroborated by at least two records including an approved identity document).
+  **0** location clears have both name and date of birth agreeing, so step 9's exception holds.
+- **The bug the review existed to find.** `addresses` and `place_of_birth` hold *places*, and the
+  last part of a place is often a country but sometimes is not one at all. The country table's
+  identity fallback turned `"12 Main Street, Apartment 4"` into a country called `"apartment 4"` —
+  which **gave the hit a country the customer did not share, and cleared it**. Every address tail in
+  dev happens to be a real country, so it never fired here; the unseen set has new hits and it would
+  have been a 60-cost error. Two fixes:
+  - **Guard D.** `key_from_place(..., strict=True)` for `addresses` and `place_of_birth`: no country
+    rather than an invented one. `countries`, `nationality` and `citizenship` are *declared* to hold
+    countries, so they keep the identity fallback and an unrecognised spelling still matches the
+    same spelling on the other side.
+  - A side whose **every** country is unrecognised cannot carry a location clear, on either side.
+    One recognised country is enough.
+
+  Free on dev — output byte-identical, practice cost still **0** — and the ablations still produce
+  **0 new clears**. **543 tests pass.**
+- **Findings from reading the clears by hand.**
+  - **29 `NAME_MISMATCH_VERIFIED` clears have the record name *and* the date of birth agreeing.**
+    That reads alarming and is exactly POLICY's planted pattern: `H-3436E7`'s record says
+    `"Zachary Baker"`, the hit is `"Baker, Zachary M"`, the dates match — and the **verified legal
+    name is `"CHRISTOPHER BAKER"`**. Principle 6: the verified name clears the hit "even if the name
+    on their record does" agree. One of the 29 carries a label and it agrees.
+  - **12 location clears have the date of birth agreeing but not the name.** POLICY's exception
+    needs both, so these are clears by the letter — and reading them, they are coincidences of
+    birth year between plainly different people (`"Amin, Al"` in Bangladesh against
+    `"HALIMA CHUKWU"` in Nigeria). `NAME_MISMATCH_VERIFIED` fires on them too, so each is doubly
+    supported; `LOCATION_MISMATCH` is merely first in the fixed order.
+  - **All 57 `DOB_MISMATCH` clears that rest on an extracted date check out.** Each search-derived
+    one quotes a snippet carrying the hit's listing phrase and one of its countries, states exactly
+    one age and one date, and the arithmetic is right (24 in September 1992 → 1967 or 1968). Each
+    prose-derived one is a single clean sentence. The customer side is a verified check in every case.
+  - The 4 `DECEASED` and the 1 `ENTITY_TYPE_MISMATCH` are each plainly right. Worth recording that
+    `DECEASED` does **not** consult the customer's account status: POLICY says a date of death
+    before the screening date is enough, and a customer being screened in 2026 cannot be someone who
+    died in 2022.
+  - The 5 `TEMPORAL_IMPOSSIBILITY` clears on a partially known birth date are safe by construction:
+    `max_age_at` fills an unknown month and day with January 1, so it reports the **oldest** the
+    customer could have been, and still finds them under 16.
 
 ### Step 13 — README and final output
 - **Goal.** Deliverables complete.
