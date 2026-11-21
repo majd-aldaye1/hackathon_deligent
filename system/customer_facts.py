@@ -42,7 +42,8 @@ class CustomerFacts(object):
     """What the bank knows about one person."""
 
     def __init__(self, record_ids, entity_type, declared_names, declared_dobs,
-                 country_facts, approved, note_ids=()):
+                 country_facts, approved, note_ids=(), unreadable_places=(),
+                 unreadable_checks=()):
         self.record_ids = tuple(record_ids)
         self.entity_type = entity_type
         self.declared_names = list(declared_names)
@@ -51,6 +52,10 @@ class CustomerFacts(object):
         # every approved check of the person, most recent first
         self.approved = list(approved)
         self.note_ids = tuple(note_ids)
+        # Sources that were there but could not be read.  They do not add facts; they stop
+        # the absence of a fact from being mistaken for a contradiction.
+        self.unreadable_places = tuple(unreadable_places)
+        self.unreadable_checks = tuple(unreadable_checks)
 
     # -- identity
 
@@ -117,6 +122,29 @@ class CustomerFacts(object):
         if verified is not None:
             return [verified]
         return merge(self.declared_dobs)
+
+    @property
+    def countries_may_be_incomplete(self):
+        """A note says where they lived and we could not tell where.
+
+        POLICY principle 6 counts "places the notes say they lived" among the customer's
+        countries, so one unread note means the set is not the whole set — and
+        `LOCATION_MISMATCH` needs *every* customer country to differ.
+        """
+        return bool(self.unreadable_places)
+
+    @property
+    def verified_dob_may_be_missing(self):
+        """There is an identity check for this person, but no verified date of birth.
+
+        Either an approved check gave none, or a note recording one could not be read at
+        all.  "Verified beats declared", so falling back to a declared date that the
+        unread verified one would have overruled must not clear a hit — that is exactly
+        how a customer whose record is out of date gets wrongly cleared.
+        """
+        if self.verified_dob is not None:
+            return False
+        return bool(self.approved) or bool(self.unreadable_checks)
 
     def country_facts(self):
         return merge(self.countries)
@@ -198,11 +226,16 @@ def gather(data, record_ids, variants=None):
                 )
             )
 
-    note_ids = []
+    note_ids, unreadable_places, unreadable_checks = [], [], []
     for note in _person_notes(data, records):
         note_ids.append(note["note_id"])
         if note.get("channel", "") == notes_regex.KYC_CHANNEL:
             parsed = notes_regex.parse_kyc_note(note)
+            if parsed is None:
+                # A note filed as an identity check that we could not read at all.
+                unreadable_checks.append(note["note_id"])
+            elif parsed.is_approved and not parsed.verified_dob:
+                unreadable_checks.append(note["note_id"])
             if parsed is not None and parsed.is_approved:
                 approved.append(
                     VerifiedIdentity(
@@ -215,7 +248,10 @@ def gather(data, record_ids, variants=None):
                     )
                 )
             continue
-        for key in notes_regex.places_lived(note):
+        found = notes_regex.places_lived(note)
+        if not found and notes_regex.looks_like_residence(note):
+            unreadable_places.append(note["note_id"])
+        for key in found:
             country_facts.append(Fact(key, (note["note_id"],)))
 
     approved.sort(key=lambda c: c.recency(), reverse=True)
@@ -233,6 +269,8 @@ def gather(data, record_ids, variants=None):
         country_facts=country_facts,
         approved=approved,
         note_ids=sorted(note_ids),
+        unreadable_places=sorted(unreadable_places),
+        unreadable_checks=sorted(unreadable_checks),
     )
 
 

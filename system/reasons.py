@@ -135,8 +135,12 @@ _DOB_STATE = {
     "hit_has_none": "the hit gives no date of birth to compare",
     "customer_has_none": "the customer's records give no date of birth to compare",
     "neither": "their dates of birth neither agree nor contradict each other",
+    "contradict": "their dates of birth disagree",
     None: "their dates of birth agree",
 }
+
+# Codes whose own sentence is already about dates, so the closing must not repeat it.
+_ABOUT_DATES = ("DOB_MISMATCH", "TEMPORAL_IMPOSSIBILITY", "DECEASED")
 
 
 def _closing(context, settled_by, code=None):
@@ -162,6 +166,10 @@ def _closing(context, settled_by, code=None):
         name = "the customer's name does not agree with the hit's name %s" % context.get(
             "hit_name", ""
         )
+    if code in _ABOUT_DATES:
+        # The first sentence already dealt with the dates; repeating them reads as a
+        # contradiction of it.
+        return "Otherwise %s, so %s is what settles it." % (name, settled_by)
     dob = _DOB_STATE.get(context.get("dob_gap"), "their dates of birth agree")
     return "Otherwise %s and %s, so %s is what settles it." % (name, dob, settled_by)
 
@@ -234,6 +242,19 @@ def for_review(detail):
             "The customer's name does not agree with the hit's name %s, but no verified legal "
             "name settles it." % detail.get("hit_name", "")
         )
+    if detail.get("dob_gap") == "contradict":
+        if detail.get("verified_dob_unreadable"):
+            out.append(
+                "Their dates of birth disagree, but the customer has an identity check "
+                "whose verified date of birth could not be read, so the disagreement "
+                "cannot be relied on and the hit is left for a person."
+            )
+        else:
+            out.append(
+                "Their dates of birth disagree, but not by enough to clear the hit, so it "
+                "is left for a person."
+            )
+        return " ".join(out)
     gap = _DOB_GAP.get(detail.get("dob_gap"))
     if gap:
         out.append(

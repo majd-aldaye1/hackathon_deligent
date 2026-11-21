@@ -286,6 +286,7 @@ bug). The 8 zero-candidate alerts look like genuine "customer not in the system 
 | D24 | A customer name with one real part | may agree / require two matched parts | **may agree**, exactly as principle 8 says ("every part of the shorter name matches") | `preferred_name` is often a bare given name, so this widens the unlinked search. Requiring two matched parts moves ambiguity only 27 → 26 but **loses the customer on 7 unlinked alerts**, and 30 alerts screen a name with fewer than two parts anyway. Extra persons can only make principle 3's unanimity *harder*, so they make clearing less likely, not more — the safe direction | 2026-11-21 |
 | D25 | A verified field the newest check omits | leave it unknown / fall back to an older approved check | **fall back to the most recent approved check that states it** | POLICY names "the most recent approved identity check" as the source for all three fields, but 1 850 provider checks carry no `verified_dob` and 8 note-recorded ones carry no country. An older *approved* check is still verified evidence, and leaving the field unknown would silently demote the customer to their declared data | 2026-11-21 |
 | D26 | Evidence for a hit-only rule (`DECEASED`, `ENTITY_TYPE_MISMATCH`) | cite nothing / cite the customer's records | **cite the person's own records** | the hit is the subject of the decision and is never evidence (no label cites an `H-…`), but principle 9 wants "the records it relied on" and the customer side of both comparisons is the record itself | 2026-11-21 |
+| D27 | A fact source that is present but unreadable | treat the fact as absent / treat the set as unknown and refuse to clear | **treat the set as unknown** — guards A, B and C | POLICY's contradictions quantify over *every* country / *every* birth date, so an unread fact makes the set unknown rather than smaller, and "unknown is not a mismatch". Measured with `tools/ablate.py`: without the guards, a failed extractor turns **51** hits into clears, two of them practice labels whose truth is `SAME_ENTITY`. With them, all five ablations produce **0** new clears, at **no cost on dev** | 2026-11-21 |
 
 ---
 
@@ -508,8 +509,8 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
   decision, never evidence for it — while search-derived dates carry their `SR-…` id, which is why
   the labels cite `SR-…` and never `H-…`.
 - **Acceptance — met.** **369 tests pass** (75 new), 76 s. All 819 hit sheets in **0.1 s**.
-  Dates of birth come from the field for 152 hits, the notes for 43, search for 72, and nowhere for
-  552. **All ten** practice-label hit dates of birth are exact, and **all five** search results the
+  Dates of birth come from the field for 152 hits, the notes for 45, search for 72, and nowhere for
+  550 (43 and 552 before step 9 closed two cue gaps). **All ten** practice-label hit dates of birth are exact, and **all five** search results the
   labels cite are anchored (`SR-A88751`, `SR-65C752`, `SR-01BFC3`, `SR-AE2CE1`, `SR-590704`).
   215 hits have a strict dated report, `H-13E1CF`'s earliest is `2020-01-08` as its label says, 4
   have a death date, 87 have no country at all, and no company hit takes a date from notes or search.
@@ -618,13 +619,67 @@ Status key: `[ ]` not started · `[x]` done. Every step ends with its acceptance
   - Verified by hand as well: runs from another working directory with absolute paths, creates a
     missing output directory, and exits **2** with a one-line message (no traceback) on a bad folder.
 
-### Step 9 — Error analysis on the practice labels
-- **Goal.** Drive practice cost down by implementing principles more faithfully, never by special-casing.
-- **Files.** `tools/explain.py` (one hit → full fact sheets + rule trace), fixes across `system/`
-- **Notes.** Also settle the evidence variant (cite the name source in `REVIEW`/`SAME` or not, §3.7.4)
-  by scoring both against the labels and logging the winner here.
-- **Acceptance.** Every remaining practice disagreement has a one-line written explanation; unsafe clears still 0.
-- **Risks.** Over-fitting 50 labels. Any change must be justified by a POLICY sentence, quoted in the commit.
+### Step 9 — Error analysis and generalisation guards — **[x] done**
+- **Goal.** Drive the practice cost down by implementing principles more faithfully, never by
+  special-casing. The cost was already **0**, so the real work was the unseen set: finding rules
+  that pass on dev but would misfire on text worded differently.
+- **Files.** `tools/explain.py`, `tools/ablate.py`, `system/notes_regex.py`,
+  `system/customer_facts.py`, `system/hit_facts.py`, `system/rules.py`, `system/reasons.py`,
+  `tests/test_guards.py`
+- **Notes.** `tools/explain.py <hit_id>` prints both fact sheets, every note and check with what was
+  extracted from it, which rules fire, the verdict, and the label if there is one.
+  `tools/ablate.py` re-runs all 819 hits with one extractor switched off and reports which decisions
+  move — listing every decision that moves **into** `DIFFERENT_ENTITY`, because that is the 60-cost
+  mistake.
+- **The measurement that drove the step.** Before the guards:
+
+  | extractor switched off | decisions that change | **new clears** |
+  |---|---|---|
+  | places lived, from support notes | 41 | **41** |
+  | identity checks written up in notes | 60 | **15** |
+  | dates of birth from hit profile notes | 33 | **1** |
+  | dates of birth from search results | 46 | 0 |
+  | all free text (fields only) | 169 | **51** |
+
+  Two extractors were load-bearing *safety* machinery, not just accuracy machinery, and **two of the
+  15 (`H-4D76E3`, `H-80B4B5`) are practice labels whose truth is `SAME_ENTITY`** — so that failure
+  mode is proven to cost 60 on real labels, not hypothetically.
+- **Three guards, each from POLICY's own quantifier.** Every contradiction quantifies over *every*
+  fact of a kind, so a fact we failed to read does not make the set smaller — it makes the set
+  unknown, and "unknown is not a mismatch".
+  - **A. An unread place means the country set is not the whole set.** A non-KYC note with a
+    residence cue but no country we can place marks `countries_may_be_incomplete`, and
+    `LOCATION_MISMATCH` does not fire. (`H-FF3096` is the shape: the record says Australia, a note
+    says the customer lived in the United States, the hit is the United States. Lose the note and
+    it clears — wrongly, as the label confirms.)
+  - **B. An unread identity check means the verified date of birth is missing, not absent.** With no
+    verified date but an approved check or an unreadable `kyc` note on file,
+    `DOB_MISMATCH` does not fire — "verified beats declared", so a declared date that the unread
+    verified one would have overruled must not clear. A customer with **no** identity check at all
+    may still clear on a declared date (D7 unchanged).
+  - **C. The location exception cannot be applied to a date we could not read.** If the hit's first
+    paragraph talks about a birth or an age but yielded no date, and the name agrees, then whether
+    POLICY's exception applies is unknown, so `LOCATION_MISMATCH` does not fire.
+- **Acceptance — met.** All three guards are **free on dev**: 0 of the 6 253 country-less non-KYC
+  notes carry a residence cue, and all 461 persons behind an alert have a verified date of birth.
+  After them, **every one of the five ablations produces 0 new clears** — whichever extractor fails,
+  the system moves toward `REVIEW` (3) and never toward a wrong clear (60). Practice cost still
+  **0**, unsafe clears **0**, `reason_code` 50/50, `customer_record_id` 50/50, evidence exact 50/50.
+  **484 tests pass.**
+- **Findings.**
+  - **Guard C earned its keep immediately**: it fired on `H-3DB30F`, whose first paragraph *is* an
+    age sentence the cue list could not read — `"reached 37 years of age by November 1981"`. A sweep
+    for the same shape found one more, `"at age 31, had charges filed"`. Both cues are now in, both
+    hits now yield birth years, and **no profile in the folder states a birth we cannot read** — an
+    assertion the suite now keeps. Note-derived dates went 43 → 45, and the two new ones both clear
+    correctly on a verified date more than 30 years out.
+  - The guards also exposed a reason that argued with itself: `H-9FE839` said the date of birth
+    settled it and then that the dates "neither agree nor contradict". The closing sentence is now
+    code-aware (it never re-describes dates for `DOB_MISMATCH`, `TEMPORAL_IMPOSSIBILITY` or
+    `DECEASED`), and a new `contradict` state lets a review blocked by guard B say the honest thing:
+    the dates disagree, but the verified one could not be read, so the disagreement cannot be relied on.
+  - Decision distribution moved 461/235/123 → **462/234/123** across the whole step: guard C gave one
+    clear back as a review, and the two new cues turned two reviews into sound clears.
 
 ### Step 10 — LLM fallback extractor
 - **Goal.** Recover facts regex misses, without ever lowering precision.

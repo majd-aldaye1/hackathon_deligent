@@ -188,6 +188,11 @@ def dob_mismatch(customer, hit, screened, variants=None):
     customer_dobs = customer.dob_facts()
     if not hit_dobs or not customer_dobs:
         return None
+    if getattr(customer, "verified_dob_may_be_missing", False):
+        # An approved identity check exists but we could not read a date of birth out of
+        # it.  "Verified beats declared", so a declared date must not clear the hit when
+        # the verified one it would be overruled by is simply unread.
+        return None
     for fact in customer_dobs:
         if not dates.all_contradict(fact.value, hit_dobs):
             return None
@@ -204,6 +209,15 @@ def dob_mismatch(customer, hit, screened, variants=None):
 def location_mismatch(customer, hit, screened, variants=None):
     """"Every country tied to the customer differs from every country tied to the hit." """
     if not countries_disjoint(customer, hit):
+        return None
+    if getattr(customer, "countries_may_be_incomplete", False):
+        # A note says where the customer lived and we could not place it, so "every
+        # country tied to the customer" is not a set we actually have.
+        return None
+    if getattr(hit, "dob_unreadable", False) and names_agree(customer, hit, variants)[0]:
+        # POLICY's location rule has an exception for a hit "whose name and date of birth
+        # agree".  The hit's profile talks about a birth we could not read, so whether the
+        # exception applies is unknown — and an unknown is not a difference.
         return None
     return Finding(
         "LOCATION_MISMATCH",
@@ -390,6 +404,15 @@ def evaluate(customer, hit, screened, variants=None):
     )
 
 
+def dobs_contradict(customer, hit):
+    """Every date the customer has against every date the hit gives."""
+    customer_dobs = customer.dob_facts()
+    hit_dobs = [f.value for f in hit.dobs]
+    if not customer_dobs or not hit_dobs:
+        return False
+    return all(dates.all_contradict(f.value, hit_dobs) for f in customer_dobs)
+
+
 def _context(customer, hit, name_ok, dob_ok):
     """The state of the comparisons a contradiction did not rest on."""
     if not hit.dobs:
@@ -398,6 +421,8 @@ def _context(customer, hit, name_ok, dob_ok):
         gap = "customer_has_none"
     elif dob_ok:
         gap = None
+    elif dobs_contradict(customer, hit):
+        gap = "contradict"
     else:
         gap = "neither"
     return {
@@ -449,6 +474,14 @@ def _review_detail(customer, hit, name_ok, name_fact, dob_ok):
         first = customer.dob_facts()[0]
         detail["customer_dob"] = first.value
         detail["customer_dob_sources"] = first.source_ids
+    if detail["dob_gap"] is None and not dob_ok:
+        detail["dob_gap"] = "neither"
+    if dobs_contradict(customer, hit):
+        detail["dob_gap"] = "contradict"
+    # Why a disagreement did not clear the hit: the verified date could not be read.
+    detail["verified_dob_unreadable"] = bool(
+        getattr(customer, "verified_dob_may_be_missing", False)
+    )
     detail["hit_description"] = hit.dob_description()
     detail["hit_dob_list"] = hit.dob_list()
     return detail

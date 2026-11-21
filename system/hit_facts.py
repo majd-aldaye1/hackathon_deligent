@@ -63,8 +63,16 @@ _AGE_CUES = [
     re.compile(r"\bat\s+(?:the\s+age\s+of\s+)?" + _AGE_NUM + r"\s+when\b", re.I),
     re.compile(r"\bwho\s+at\s+" + _AGE_NUM, re.I),
     re.compile(r"\bat\s+which\s+point\s+(?:he|she|they)\s+was\s+" + _AGE_NUM, re.I),
+    re.compile(_AGE_NUM + r"\s+years?\s+of\s+age\b", re.I),
+    re.compile(r"\bat\s+age\s+" + _AGE_NUM, re.I),
+    re.compile(r"\breached\s+" + _AGE_NUM, re.I),
     re.compile(r",\s*(?:a\s+)?" + _AGE_NUM + r"\s*,", re.I),
 ]
+
+# A first paragraph that talks about a birth or an age, whether or not we could pin a date
+# to it.  Used only to tell "this hit states no date of birth" from "this hit states one we
+# could not read" — the second must not be treated as the first.
+_BIRTH_TALK = re.compile(r"\b(born|birth|birthday|aged?|years?\s+old|year-old)\b", re.I)
 
 _MONTH_YEAR = re.compile(r"\b(%s)\s+(\d{4})\b" % MONTH, re.I)
 _BARE_YEAR = re.compile(r"\b(1[89]\d{2}|20\d{2})\b")
@@ -154,6 +162,14 @@ def birth_dates_from_notes(profile_notes):
     return [dates.Date(y) for y in sorted({year - age, year - age - 1})]
 
 
+def states_a_birth(profile_notes):
+    """True when the first paragraph talks about a birth or an age."""
+    paragraph = first_paragraph(profile_notes)
+    if not paragraph or _is_dated_report(paragraph):
+        return False
+    return bool(_BIRTH_TALK.search(paragraph))
+
+
 def country_keys(hit):
     """Every country tied to the hit, in POLICY principle 5's order."""
     keys = []
@@ -198,7 +214,8 @@ class HitFacts(object):
     """What the watchlist profile says."""
 
     def __init__(self, hit_id, alert_id, entity_type, names_, country_keys_, dobs,
-                 dob_origin, death, earliest_report, listing_phrase, result_ids=()):
+                 dob_origin, death, earliest_report, listing_phrase, result_ids=(),
+                 dob_unreadable=False):
         self.hit_id = hit_id
         self.alert_id = alert_id
         self.entity_type = entity_type
@@ -212,6 +229,9 @@ class HitFacts(object):
         self.earliest_report = earliest_report
         self.listing_phrase = listing_phrase
         self.result_ids = tuple(result_ids)
+        # The profile talks about a birth or an age but we could not read a date out of it.
+        # Not a fact, only a reason not to treat the silence as "this hit has no date".
+        self.dob_unreadable = bool(dob_unreadable) and not dobs
 
     @property
     def is_company(self):
@@ -309,4 +329,5 @@ def gather(data, hit, variants=None):
         earliest_report=Fact(report) if report is not None else None,
         listing_phrase=phrase,
         result_ids=result_ids,
+        dob_unreadable=(not is_company) and states_a_birth(hit.get("profile_notes", "")),
     )

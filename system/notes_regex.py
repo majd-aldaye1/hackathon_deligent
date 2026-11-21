@@ -284,6 +284,24 @@ def parse_kyc_note(note):
     )
 
 
+# Words that mark a support note as a statement about where the customer lived or worked.
+# Used only to notice when such a note names no country we recognise: POLICY counts those
+# places among the customer's countries, so failing to read one makes the country set
+# incomplete, and an incomplete set must not clear a hit.
+_RESIDENCE_CUES = re.compile(
+    r"\b(lived|living|resid\w*|home|household|based|employ\w*|work\w*|job|career"
+    r"|relocat\w*|stay\w*|moved|settled)\b",
+    re.I,
+)
+
+
+def looks_like_residence(note):
+    """True when a non-KYC note reads as a statement about where someone lived."""
+    if note.get("channel", "") == KYC_CHANNEL:
+        return False
+    return bool(_RESIDENCE_CUES.search(note.get("text", "")))
+
+
 def places_lived(note):
     """Countries a non-KYC note says the customer lived in.
 

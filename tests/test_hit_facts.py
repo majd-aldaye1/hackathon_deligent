@@ -330,7 +330,16 @@ class TestAgainstTheDevelopmentSet(unittest.TestCase):
         counts = {}
         for facts in self.sheets.values():
             counts[facts.dob_origin] = counts.get(facts.dob_origin, 0) + 1
-        self.assertEqual(counts, {"field": 152, "notes": 43, "search": 72, None: 552})
+        self.assertEqual(counts, {"field": 152, "notes": 45, "search": 72, None: 550})
+
+    def test_no_profile_states_a_birth_we_could_not_read(self):
+        # Guard C in step 9 found two phrasings the cue list was missing; this keeps the
+        # cue list honest as the unseen set brings more of them.
+        unread = [
+            f.hit_id for f in self.sheets.values()
+            if f.dob_unreadable
+        ]
+        self.assertEqual(unread, [])
 
     def test_no_date_of_birth_comes_from_a_providers_dated_report(self):
         for facts in self.sheets.values():
