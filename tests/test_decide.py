@@ -146,6 +146,26 @@ class TestSeveralPeopleFit(unittest.TestCase):
         self.assertEqual(out["H-1"].customer_record_id, "CUS-A")
 
 
+class TestEveryLinkIsDecided(unittest.TestCase):
+    def test_a_second_link_to_the_matching_person_stops_the_clear(self):
+        # The account leads to a namesake in Spain, the email to a namesake who matches the
+        # hit exactly.  Following only the account would clear the hit on location.
+        out = run(
+            [fixture.alert(name="Juan Gonzalez", dob="1970", account_ref="ACC-1",
+                           email="cus-b@example.test", hit_ids=["H-1"])],
+            [hit_row(name="Gonzalez, Juan", countries=["Japan"], dobs=["1970-09-09"])],
+            [fixture.customer("CUS-A", "Juan Gonzalez", dob="1970-03-01",
+                              residence_country="Spain"),
+             fixture.customer("CUS-B", "Juan Gonzalez", dob="1970-09-09",
+                              residence_country="Japan")],
+            accounts=[fixture.account("ACC-1", "CUS-A")],
+        )
+        decision = out["H-1"]
+        self.assertEqual(decision.decision, "REVIEW")
+        self.assertEqual(decision.reason_code, "AMBIGUOUS_CUSTOMER_RECORD")
+        self.assertEqual(decision.customer_record_id, "AMBIGUOUS")
+
+
 class TestFailSafe(unittest.TestCase):
     def test_a_hit_that_raises_becomes_a_review_and_never_a_clear(self):
         out = run(

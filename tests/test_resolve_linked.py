@@ -64,6 +64,12 @@ class TestScreened(unittest.TestCase):
         screened = resolve.Screened(alert(account_ref="ACC-1", email="a@b"))
         self.assertEqual(screened.link_kind, resolve.ACCOUNT_REF)
 
+    def test_every_link_field_is_kept(self):
+        screened = resolve.Screened(alert(account_ref="ACC-1", login_handle="h", email="a@b"))
+        self.assertEqual(screened.links, [(resolve.ACCOUNT_REF, "ACC-1"),
+                                          (resolve.LOGIN_HANDLE, "h"), (resolve.EMAIL, "a@b")])
+        self.assertEqual(resolve.Screened(alert()).links, [])
+
     def test_the_screened_details_are_parsed(self):
         screened = resolve.Screened(alert(customer_name="Ada", dob="1968-02", country="GB"))
         self.assertEqual(screened.dob.iso(), "1968-02")

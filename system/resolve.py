@@ -29,7 +29,7 @@ class Screened(object):
     """The customer as screened: what the alert says about them."""
 
     __slots__ = ("alert_id", "screened_at", "name", "entity_type", "dob", "country",
-                 "city", "city_pieces", "link_kind", "link_value")
+                 "city", "city_pieces", "link_kind", "link_value", "links")
 
     def __init__(self, alert):
         self.alert_id = alert.get("alert_id", "")
@@ -40,7 +40,10 @@ class Screened(object):
         self.country = countries.key(alert.get("country"))
         self.city = alert.get("city", "")
         self.city_pieces = _city_pieces(self.city)
-        self.link_kind, self.link_value = _link(alert)
+        # Every link the alert carries, in the order account, login, email.  link_kind and
+        # link_value name the first of them, for reporting.
+        self.links = _links(alert)
+        self.link_kind, self.link_value = self.links[0] if self.links else (NO_LINK, "")
 
     @property
     def is_company(self):
@@ -50,12 +53,11 @@ class Screened(object):
         return "Screened(%s, %r)" % (self.alert_id, self.name)
 
 
-def _link(alert):
-    for kind in (ACCOUNT_REF, LOGIN_HANDLE, EMAIL):
-        value = alert.get(kind, "")
-        if value:
-            return kind, value
-    return NO_LINK, ""
+def _links(alert):
+    """Every link field the alert carries, as (kind, value), in the order account, login,
+    email."""
+    return [(kind, alert.get(kind)) for kind in (ACCOUNT_REF, LOGIN_HANDLE, EMAIL)
+            if alert.get(kind)]
 
 
 def _city_pieces(city):
@@ -158,21 +160,21 @@ def linked_record_ids(data, screened):
     account_ref -> Accounts.account_id -> customer_id (52 accounts have two: joint
     holders).  login_handle -> Accounts.login_handle -> customer_id.  email ->
     Customers.email.
+
+    Every link field the alert carries is followed, not only the first.  If an account and
+    an email lead to different people, the screened details pick between them as they do
+    between joint holders, and if they cannot, every person is decided (principle 3)
+    rather than one link being trusted silently.
     """
-    ids = []
-    if screened.link_kind == ACCOUNT_REF:
-        for account in data.accounts_by_id.get(screened.link_value, ()):
-            if account.get("customer_id") and account["customer_id"] not in ids:
-                ids.append(account["customer_id"])
-    elif screened.link_kind == LOGIN_HANDLE:
-        for account in data.accounts_by_login.get(screened.link_value, ()):
-            if account.get("customer_id") and account["customer_id"] not in ids:
-                ids.append(account["customer_id"])
-    elif screened.link_kind == EMAIL:
-        for customer in data.customers_by_email.get(screened.link_value.lower(), ()):
-            if customer["record_id"] not in ids:
-                ids.append(customer["record_id"])
-    return sorted(id_ for id_ in ids if id_ in data.customer_by_id)
+    ids = set()
+    for kind, value in screened.links:
+        if kind == ACCOUNT_REF:
+            ids.update(a.get("customer_id") for a in data.accounts_by_id.get(value, ()))
+        elif kind == LOGIN_HANDLE:
+            ids.update(a.get("customer_id") for a in data.accounts_by_login.get(value, ()))
+        elif kind == EMAIL:
+            ids.update(c["record_id"] for c in data.customers_by_email.get(value.lower(), ()))
+    return sorted(id_ for id_ in ids if id_ and id_ in data.customer_by_id)
 
 
 def choose_among(screened, customers, variants=None):
@@ -206,7 +208,7 @@ def seed_records(data, screened, variants=None):
     ids = linked_record_ids(data, screened)
     customers = [data.customer_by_id[i] for i in ids]
     chosen = choose_among(screened, customers, variants)
-    return chosen, screened.link_kind
+    return chosen, "+".join(kind for kind, _ in screened.links)
 
 
 # ------------------------------------------------------- searching without a link

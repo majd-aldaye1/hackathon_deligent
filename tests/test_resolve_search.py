@@ -85,6 +85,49 @@ class TestSearch(unittest.TestCase):
             self.assertEqual(resolution.record_ids, ["CUS-B"])
 
 
+class TestEveryLinkIsFollowed(unittest.TestCase):
+    """POLICY principle 2: "Follow whatever link the alert carries."  When an alert carries
+    an account and an email that lead to different people, both are followed and the
+    screened details pick between them, as they do between joint holders."""
+
+    def _resolve(self, screened_name, name_a="Ada Lovelace", name_b="Ada Lovelace",
+                 email="cus-b@example.test"):
+        row = fixture.alert(name=screened_name, account_ref="ACC-1", email=email)
+        with fixture.Folder(
+            alerts=[row],
+            customers=[fixture.customer("CUS-A", name_a), fixture.customer("CUS-B", name_b)],
+            accounts=[fixture.account("ACC-1", "CUS-A")],
+        ) as data:
+            return resolve_one(data, row)
+
+    def test_two_links_to_two_people_who_both_fit_keep_both(self):
+        resolution = self._resolve("Ada Lovelace")
+        self.assertEqual(resolution.record_ids, ["CUS-A", "CUS-B"])
+        self.assertTrue(resolution.ambiguous)
+        self.assertEqual(resolution.how, "account_ref+email")
+
+    def test_the_screened_details_pick_the_one_that_fits(self):
+        self.assertEqual(self._resolve("Grace Hopper", name_a="Ada Lovelace",
+                                       name_b="Grace Hopper").record_ids, ["CUS-B"])
+        self.assertEqual(self._resolve("Ada Lovelace", name_a="Ada Lovelace",
+                                       name_b="Grace Hopper").record_ids, ["CUS-A"])
+
+    def test_when_neither_fits_both_are_kept(self):
+        resolution = self._resolve("Mary Shelley", name_a="Ada Lovelace", name_b="Grace Hopper")
+        self.assertEqual(resolution.record_ids, ["CUS-A", "CUS-B"])
+
+    def test_two_links_to_the_same_person_are_one_person(self):
+        resolution = self._resolve("Ada Lovelace", email="cus-a@example.test")
+        self.assertEqual(resolution.record_ids, ["CUS-A"])
+        self.assertFalse(resolution.ambiguous)
+
+    def test_a_single_link_reports_its_own_kind(self):
+        row = fixture.alert(name="Ada Lovelace", email="cus-a@example.test")
+        with fixture.Folder(alerts=[row],
+                            customers=[fixture.customer("CUS-A", "Ada Lovelace")]) as data:
+            self.assertEqual(resolve_one(data, row).how, resolve.EMAIL)
+
+
 class TestResolutionVerdict(unittest.TestCase):
     def test_one_person_reports_a_record_id(self):
         row = fixture.alert(name="Ada Lovelace", dob="1815-12-10")

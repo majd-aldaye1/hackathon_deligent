@@ -33,6 +33,27 @@ class TestResidenceCue(unittest.TestCase):
         note = {"channel": "app", "text": "Customer reported a lost card. Card frozen."}
         self.assertFalse(notes_regex.looks_like_residence(note))
 
+    def test_origin_and_upbringing_wording_is_a_residence_statement(self):
+        for text in ("The customer is originally from Amman.", "She grew up in Salalah.",
+                     "Raised in Kandy, he moved later.", "Says he was born in Aleppo.",
+                     "Spent ten years in Mosul before joining.", "He hails from Tikrit.",
+                     "A native of Hebron.", "The customer came from Zarqa.",
+                     "He is from Irbid.", "Studied in Leiden for two years."):
+            with self.subTest(text=text):
+                self.assertTrue(notes_regex.looks_like_residence(
+                    {"channel": "email", "text": text}))
+
+    def test_the_same_words_in_ordinary_support_notes_are_not(self):
+        for text in ("Customer raised a complaint about fees.", "Spent 50 pounds at a shop.",
+                     "Email from customer about a refund.", "Transfer from savings failed.",
+                     "The email was from the customer.", "The transfer was from savings.",
+                     "The native app crashed on login.", "The card was originally issued in March.",
+                     "Customer said born in 1980 on the form.",
+                     "The call came from a new number."):
+            with self.subTest(text=text):
+                self.assertFalse(notes_regex.looks_like_residence(
+                    {"channel": "app", "text": text}))
+
     def test_a_kyc_note_is_never_a_residence_statement(self):
         note = {"channel": "kyc", "text": "Verified the passport, the holder resides abroad."}
         self.assertFalse(notes_regex.looks_like_residence(note))

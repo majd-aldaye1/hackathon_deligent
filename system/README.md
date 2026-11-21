@@ -88,7 +88,9 @@ the facts its rule used. There is no separate evidence logic that could drift ou
 
 - **Link first.** `account_ref` → `Accounts`, which can give two customer ids for a joint account.
   `login_handle` → `Accounts` (not `Customers.login_name`, which is empty). `email` → `Customers`.
-  If a link reaches exactly one record, that record is taken. If it reaches several, the screened
+  Every link field the alert carries is followed, not only the first, so an account and an email
+  that lead to different people are both considered. If the links reach exactly one record, that
+  record is taken. If it reaches several, the screened
   details choose between them. In dev, name and date of birth separate all 58 joint-holder alerts.
 - **No link:** a search on the screened details. A blocking index on name parts and their variant
   siblings finds candidates. Each candidate is then tested on name agreement, date of birth agreeing
